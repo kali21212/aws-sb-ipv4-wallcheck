@@ -1,0 +1,25 @@
+AWS.SB IPv4 WallCheck Portable V1.6 浏览器扩展
+
+支持：
+- Thorium / Chrome：chrome://extensions/
+- Edge：edge://extensions/
+- Brave：brave://extensions/
+
+安装：
+1. 打开扩展管理页面
+2. 开启“开发者模式”
+3. 点“加载已解压的扩展程序”
+4. 选择本文件所在的 browser-extension 文件夹
+5. 打开/刷新 aws.sb EC2 实例页面
+
+要求：
+先运行压缩包根目录的“启动 WallCheck.cmd”。
+
+V1.6 为纯本机版：
+- 只连接 http://127.0.0.1:17654
+- 无海外基线
+- 无海外基线端口
+- 无 SSH 隧道
+- IPv6 完全忽略
+- 每 10 分钟自动复检
+- 支持 EC2 实例 IPv4 变更提示

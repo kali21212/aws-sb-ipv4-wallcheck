@@ -1,0 +1,9 @@
+AWS.SB IPv4 WallCheck Portable
+Version: 1.6.0
+Platform: Windows 10/11 x64
+Browser extension: Chromium-family (Thorium/Chrome/Edge/Brave)
+Probe: local-only ICMP + TCP
+Default ports: 22,80,443
+Auto recheck: 10 minutes
+Overseas baseline: removed
+IPv6: ignored

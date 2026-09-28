@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+WallCheck-Agent.exe
+*.zip
+*.zip.sha256.txt
