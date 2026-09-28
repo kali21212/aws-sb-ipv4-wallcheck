@@ -10,7 +10,7 @@ if (-not (Test-Path $exe)) {
 
 try {
     $h = Invoke-RestMethod $healthUrl -TimeoutSec 1
-    if ($h.ok -and $h.agent -eq 'wallcheck-portable-v1.6') {
+    if ($h.ok -and $h.agent -eq 'wallcheck-portable-v1.6.1') {
         Write-Host 'WallCheck already running.' -ForegroundColor Green
         Write-Host ($h | ConvertTo-Json -Compress)
         exit 0
@@ -33,7 +33,7 @@ for ($i = 0; $i -lt 20; $i++) {
     Start-Sleep -Milliseconds 500
     try {
         $h = Invoke-RestMethod $healthUrl -TimeoutSec 1
-        if ($h.ok -and $h.agent -eq 'wallcheck-portable-v1.6') {
+        if ($h.ok -and $h.agent -eq 'wallcheck-portable-v1.6.1') {
             Write-Host 'WallCheck started successfully.' -ForegroundColor Green
             Write-Host ($h | ConvertTo-Json -Compress)
             exit 0

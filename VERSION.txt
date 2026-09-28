@@ -1,5 +1,5 @@
 AWS.SB IPv4 WallCheck Portable
-Version: 1.6.0
+Version: 1.6.1
 Platform: Windows 10/11 x64
 Browser extension: Chromium-family (Thorium/Chrome/Edge/Brave)
 Probe: local-only ICMP + TCP

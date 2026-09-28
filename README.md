@@ -9,7 +9,7 @@ It combines a Chromium extension with a localhost probe to:
 - test ICMP reachability plus TCP ports 22/80/443;
 - automatically recheck every 10 minutes;
 - detect when the IPv4 of the same EC2 instance ID changes;
-- highlight IP changes for 24 hours and immediately probe the new IPv4;
+- highlight IP changes for 1 hour and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
 
 ## Portable release
@@ -60,7 +60,7 @@ When the same instance ID changes from one IPv4 to another:
 - the new IPv4 is immediately rechecked;
 - the old IPv4 is removed from the active scan list;
 - limited local history is retained;
-- the orange change marker remains for 24 hours.
+- the orange change marker remains for 1 hour.
 
 ## Privacy
 

@@ -80,7 +80,7 @@ https://aws.sb/#/ec2-instances?sgt=...
   表示同一个 EC2 实例 ID 的 IPv4 已发生变化。
   鼠标悬停可查看：
   旧 IP → 新 IP + 变更时间。
-  标记保留 24 小时，新 IP 会立即重新检测。
+  标记保留 1 小时，新 IP 会立即重新检测。
 
 五、自动检测规则
 --------------
@@ -154,7 +154,7 @@ https://aws.sb/#/ec2-instances?sgt=...
 - V1.6 没有海外探针、没有海外 API、没有 SSH 隧道。
 
 版本：
-AWS.SB IPv4 WallCheck Portable V1.6.0
+AWS.SB IPv4 WallCheck Portable V1.6.1
 
 十、开机后的使用
 --------------

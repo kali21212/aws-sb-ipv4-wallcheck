@@ -3,7 +3,7 @@
 
   const CACHE_MS = 5 * 60 * 1000;
   const AUTO_RECHECK_MINUTES = 10;
-  const IP_CHANGE_MARK_MS = 24 * 60 * 60 * 1000;
+  const IP_CHANGE_MARK_MS = 1 * 60 * 60 * 1000;
   const INSTANCE_STATE_KEY = 'wallcheck_instance_state_v1';
   const cache = new Map();
   const lastCombined = new Map();
@@ -353,7 +353,7 @@
       <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck Portable</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
       <div class="row"><label>端口 <input id="wallcheck-ports" type="text" value="22,80,443"></label><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空列表</button></div>
-      <div style="color:#666;margin-top:7px">本机 ICMP + TCP 双层检测；每 ${AUTO_RECHECK_MINUTES} 分钟复检。IP变更橙色标记保留24小时。</div>
+      <div style="color:#666;margin-top:7px">本机 ICMP + TCP 双层检测；每 ${AUTO_RECHECK_MINUTES} 分钟复检。IP变更橙色标记保留1小时。</div>
     `;
     document.body.appendChild(panel);
     panel.querySelector('#wallcheck-run').addEventListener('click',()=>runCheck(true));

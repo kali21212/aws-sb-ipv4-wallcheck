@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AWS.SB IPv4 WallCheck Portable",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Portable local IPv4 reachability monitor for aws.sb using ICMP plus TCP. IPv6 is ignored.",
   "permissions": ["storage", "alarms"],
   "host_permissions": [

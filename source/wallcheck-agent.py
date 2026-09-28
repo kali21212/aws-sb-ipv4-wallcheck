@@ -134,7 +134,7 @@ def run_probe(data):
 
     return {
         "node": NODE,
-        "agent": "wallcheck-portable-v1.6",
+        "agent": "wallcheck-portable-v1.6.1",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "results": results,
     }
@@ -163,7 +163,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, {
                 "ok": True,
                 "node": NODE,
-                "agent": "wallcheck-portable-v1.6",
+                "agent": "wallcheck-portable-v1.6.1",
                 "python": sys.version.split()[0],
             })
             return

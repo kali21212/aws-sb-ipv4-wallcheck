@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.1 — 2026-09-28
+
+- Reduced the EC2 IPv4-change orange marker retention from 24 hours to 1 hour.
+- No probe protocol, privacy behavior, default ports, or 10-minute recheck cadence changed.
+
 ## 1.6.0 — 2026-09-28
 
 - Portable Windows release with standalone `WallCheck-Agent.exe`.

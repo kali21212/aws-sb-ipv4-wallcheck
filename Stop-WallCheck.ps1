@@ -4,7 +4,7 @@ $healthUrl = 'http://127.0.0.1:17654/healthz'
 $owned = $false
 try {
     $h = Invoke-RestMethod $healthUrl -TimeoutSec 1
-    if ($h.ok -and $h.agent -eq 'wallcheck-portable-v1.6') {
+    if ($h.ok -and $h.agent -eq 'wallcheck-portable-v1.6.1') {
         $owned = $true
     }
 } catch {}

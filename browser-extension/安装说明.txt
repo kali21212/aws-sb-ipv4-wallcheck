@@ -1,4 +1,4 @@
-AWS.SB IPv4 WallCheck Portable V1.6 浏览器扩展
+AWS.SB IPv4 WallCheck Portable V1.6.1 浏览器扩展
 
 支持：
 - Thorium / Chrome：chrome://extensions/
@@ -15,7 +15,7 @@ AWS.SB IPv4 WallCheck Portable V1.6 浏览器扩展
 要求：
 先运行压缩包根目录的“启动 WallCheck.cmd”。
 
-V1.6 为纯本机版：
+V1.6.1 为纯本机版：
 - 只连接 http://127.0.0.1:17654
 - 无海外基线
 - 无海外基线端口
