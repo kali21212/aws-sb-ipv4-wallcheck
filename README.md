@@ -38,6 +38,16 @@ Supported OS: Windows 10/11 x64.
 
 See `docs/操作步骤.txt` for the full Chinese guide.
 
+### Startup and failure recovery
+
+The current source includes recovery fixes on top of 1.6.1. Published 1.6.1 release ZIPs predate these fixes.
+
+After Windows restarts, run `启动 WallCheck.cmd` before opening the instances page. The package does not install a login startup item.
+
+The extension restores its latest completed results from `chrome.storage.local` and immediately rechecks on page load. Browser startup also restores the 10-minute alarm and requests a recheck. If the local probe or message channel fails, the extension retains previous results, displays the error, and retries after 15 seconds. A completed probe with no positive reachability evidence is still a new result and updates the displayed status.
+
+Results are keyed by IPv4 and the selected ports so a changed IP or port configuration does not reuse a different target's result.
+
 ## Result meanings
 
 Examples:

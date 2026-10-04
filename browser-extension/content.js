@@ -8,6 +8,22 @@
   const cache = new Map();
   const lastCombined = new Map();
   const recentChanges = new Map();
+  const RESULT_KEY = 'wallcheck_last_valid_results_v1';
+  let pendingCheck = false;
+  let pendingForce = false;
+  let retryTimer = null;
+  const storageGet = keys => new Promise((resolve, reject) => {
+    chrome.storage.local.get(keys, data => {
+      const err = chrome.runtime.lastError;
+      err ? reject(new Error(err.message)) : resolve(data);
+    });
+  });
+  const storageSet = data => new Promise((resolve, reject) => {
+    chrome.storage.local.set(data, () => {
+      const err = chrome.runtime.lastError;
+      err ? reject(new Error(err.message)) : resolve();
+    });
+  });
   let running = false;
   let scanTimer = null;
   let mutatingBadges = false;
@@ -68,7 +84,7 @@
     const best = new Map();
 
     for (const el of candidates) {
-      if (el.closest('#wallcheck-panel') || el.classList.contains('wallcheck-badge')) continue;
+      if (el.closest('#wallcheck-panel,#wallcheck-ip-change-toast,.wallcheck-badge,.wallcheck-change-badge')) continue;
       const txt = (el.innerText || el.textContent || '').trim();
       if (!txt || txt.length > 240) continue;
 
@@ -152,7 +168,7 @@
 
           const current = state[instanceId];
           if (current.changedAt && current.previousIp &&
-              now - current.changedAt <= IP_CHANGE_MARK_MS &&
+              now - current.changedAt < IP_CHANGE_MARK_MS &&
               current.ip === rec.ip) {
             recentChanges.set(rec.ip, {
               instanceId,
@@ -196,11 +212,14 @@
   }
 
   function probe(ips, ports) {
-    return new Promise(resolve => {
-      chrome.runtime.sendMessage({
-        type:'probe',
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({type:'probe',
         payload:{ips, ports, timeout_ms:1500, retries:2, concurrency:32}
-      }, res => resolve(res && res.ok ? res.data : null));
+      }, res => {
+        const err = chrome.runtime.lastError;
+        if (err || !res?.ok) reject(new Error(err?.message || res?.error || '探针没有返回响应'));
+        else resolve(res.data);
+      });
     });
   }
   function portStates(result) {
@@ -270,65 +289,76 @@
   }
 
   async function runCheck(force=false) {
-    if (running) return;
+    if (running) { pendingCheck = true; pendingForce ||= force; return; }
     const panel = document.getElementById('wallcheck-panel');
     if (!panel) return;
-
-    if (!isEC2Route()) {
-      panel.style.display = 'none';
-      return;
-    }
+    if (!isEC2Route()) { panel.style.display = 'none'; return; }
     panel.style.display = 'block';
-
-    const ipCells = collectIPCells();
-    const currentIPs = [...ipCells.keys()];
-    const instanceRecords = collectInstanceRecords(ipCells);
-    const syncResult = await syncInstanceState(instanceRecords);
-
-    if (syncResult.newChanges.length) {
-      cache.clear();
-      for (const change of syncResult.newChanges) lastCombined.delete(change.oldIp);
-      force = true;
-      showChangeToast(syncResult.newChanges);
-    }
-
-    const ips = await mergeStoredIPs(currentIPs);
-    document.getElementById('wallcheck-count').textContent =
-      '当前 ' + currentIPs.length +
-      ' / 列表 ' + ips.length +
-      (recentChanges.size ? ' / IP变更 ' + recentChanges.size : '');
-
-    if (!ips.length) {
-      document.getElementById('wallcheck-status').textContent = '未发现 IPv4';
-      return;
-    }
-    const ports = parsePorts();
-    const key = ips.slice().sort().join('|') + '::' + ports.join(',');
-    const hit = cache.get(key);
-    if (!force && hit && Date.now() - hit.time < CACHE_MS) {
-      applyBadges(ipCells, hit.value);
-      document.getElementById('wallcheck-status').textContent = '缓存结果 · ' + ips.length + ' 个 IPv4';
-      return;
-    }
-
     running = true;
-    document.getElementById('wallcheck-status').textContent = '检测中 · ' + ips.length + ' 个 IPv4';
+    let ipCells;
+    let previous = new Map();
     try {
+      ipCells = collectIPCells();
+      const currentIPs = [...ipCells.keys()];
+      const syncResult = await syncInstanceState(collectInstanceRecords(ipCells));
+      if (syncResult.newChanges.length) {
+        cache.clear();
+        force = true;
+        showChangeToast(syncResult.newChanges);
+      }
+      const ips = await mergeStoredIPs(currentIPs);
+      document.getElementById('wallcheck-count').textContent = '当前 ' + currentIPs.length + ' / 列表 ' + ips.length + (recentChanges.size ? ' / IP变更 ' + recentChanges.size : '');
+      if (!ips.length) { document.getElementById('wallcheck-status').textContent = '未发现 IPv4'; return; }
+      const ports = parsePorts();
+      const portKey = ports.join(',');
+      const key = ips.slice().sort().join('|') + '::' + portKey;
+      const data = await storageGet([RESULT_KEY]);
+      const saved = data[RESULT_KEY] || {};
+      for (const ip of ips) {
+        const entry = saved[ip + '::' + portKey];
+        if (entry?.value && entry.checkedAt) previous.set(ip, entry.value);
+      }
+      applyBadges(ipCells, previous);
+      const hit = cache.get(key);
+      if (!force && hit && Date.now() - hit.time < CACHE_MS) {
+        applyBadges(ipCells, hit.value);
+        document.getElementById('wallcheck-status').textContent = '缓存结果 · ' + new Date(hit.time).toLocaleTimeString();
+        return;
+      }
+      document.getElementById('wallcheck-status').textContent = previous.size ? '已恢复上次有效结果 · 正在重新验证' : '检测中 · ' + ips.length + ' 个 IPv4';
       const localResp = await probe(ips, ports);
+      if (!localResp?.results || ips.some(ip => !localResp.results[ip])) throw new Error('本机探针返回不完整结果');
       const combined = new Map();
+      const checkedAt = Date.now();
       for (const ip of ips) {
         const c = classify(ip, localResp);
         combined.set(ip, c);
         lastCombined.set(ip, c);
+        saved[ip + '::' + portKey] = {value:c, checkedAt};
       }
-      lastFinishedAt = new Date();
-      cache.set(key, {time:Date.now(), value:combined});
+      const bounded = Object.fromEntries(Object.entries(saved).sort((a,b) => b[1].checkedAt - a[1].checkedAt).slice(0,2000));
+      await storageSet({[RESULT_KEY]: bounded});
+      clearTimeout(retryTimer);
+      lastFinishedAt = new Date(checkedAt);
+      cache.set(key, {time:checkedAt, value:combined});
       applyBadges(ipCells, combined);
-      document.getElementById('wallcheck-status').textContent =
-        (localResp ? '本机探针✓' : '本机探针×') + ' · ' + ips.length +
-        ' 个 IPv4 · ' + lastFinishedAt.toLocaleTimeString();
+      document.getElementById('wallcheck-status').textContent = '本机探针✓ · ' + ips.length + ' 个 IPv4 · ' + lastFinishedAt.toLocaleTimeString();
+      document.getElementById('wallcheck-status').title = '';
+    } catch (err) {
+      cache.clear();
+      if (ipCells) applyBadges(ipCells, previous);
+      const status = document.getElementById('wallcheck-status');
+      status.textContent = '⚠ 本次检测失败｜' + (previous.size ? '保留上次有效结果' : '本机探针不可用') + '｜15秒后重试';
+      status.title = String(err.message || err);
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => runCheck(true), 15000);
     } finally {
       running = false;
+      if (pendingCheck) {
+        const nextForce = pendingForce;
+        pendingCheck = pendingForce = false;
+        setTimeout(() => runCheck(nextForce), 0);
+      }
     }
   }
   function install() {
@@ -362,6 +392,7 @@
       await clearStoredIPs();
       cache.clear();
       lastCombined.clear();
+      await storageSet({[RESULT_KEY]: {}});
       document.querySelectorAll('.wallcheck-badge,.wallcheck-change-badge').forEach(x => x.remove());
       document.getElementById('wallcheck-ip-change-toast')?.remove();
       runCheck(true);
@@ -370,6 +401,7 @@
     const observer = new MutationObserver(mutations => {
       if (mutatingBadges) return;
       const relevant = mutations.some(m =>
+        (m.type === 'characterData' && !m.target.parentElement?.closest('#wallcheck-panel,#wallcheck-ip-change-toast,.wallcheck-badge,.wallcheck-change-badge')) ||
         [...m.addedNodes, ...m.removedNodes].some(n =>
           n.nodeType === 1 &&
           !n.classList?.contains('wallcheck-badge') &&
@@ -382,14 +414,25 @@
       clearTimeout(scanTimer);
       scanTimer = setTimeout(()=>runCheck(false), 700);
     });
-    observer.observe(document.body,{childList:true,subtree:true});
+    observer.observe(document.body,{childList:true,characterData:true,subtree:true});
 
     chrome.runtime.onMessage.addListener(msg => {
-      if (msg?.type === 'auto-recheck') runCheck(true);
+      if (msg?.type === 'auto-recheck' || msg?.type === 'startup-recheck') runCheck(true);
     });
 
     window.addEventListener('hashchange', () => setTimeout(()=>runCheck(false), 250));
-    setTimeout(()=>runCheck(false), 600);
+    setTimeout(()=>runCheck(true), 600);
+    setInterval(() => {
+      if (!isEC2Route()) return;
+      for (const [ip, change] of recentChanges) {
+        if (Date.now() - change.changedAt >= IP_CHANGE_MARK_MS) {
+          recentChanges.delete(ip);
+          document.querySelectorAll('.wallcheck-change-badge').forEach(b => {
+            if (b.dataset.ip === ip) b.remove();
+          });
+        }
+      }
+    }, 1000);
   }
 
   install();
