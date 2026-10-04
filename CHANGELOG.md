@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — recovery fixes for 1.6.1
+
+- Persist the latest completed probe results by IPv4 and port configuration and restore them before startup revalidation.
+- Preserve previous results on probe/API/message failure, show the failure reason, and retry after 15 seconds.
+- Force an immediate check on page load and browser startup while retaining the 10-minute alarm cadence.
+- Bound background requests and queue checks requested during an active scan.
+- Detect IPv4 text-node changes and expire orange change markers at the one-hour boundary.
+- Add isolated extension regression checks covering recovery, forced checks, storage, IP changes, alarms, and messaging.
+- The Windows probe still requires manual startup after login; no login startup item is installed.
+
 ## 1.6.1 — 2026-09-28
 
 - Reduced the EC2 IPv4-change orange marker retention from 24 hours to 1 hour.

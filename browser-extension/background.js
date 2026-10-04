@@ -15,7 +15,12 @@ function ensureAutoAlarm() {
 }
 
 chrome.runtime.onInstalled.addListener(ensureAutoAlarm);
-chrome.runtime.onStartup.addListener(ensureAutoAlarm);
+chrome.runtime.onStartup.addListener(() => {
+  ensureAutoAlarm();
+  chrome.tabs.query({url:'https://aws.sb/*'}, tabs => {
+    for (const tab of tabs) if (tab.id) chrome.tabs.sendMessage(tab.id, {type:'startup-recheck'}, () => { void chrome.runtime.lastError; });
+  });
+});
 ensureAutoAlarm();
 
 chrome.alarms.onAlarm.addListener(alarm => {
@@ -33,7 +38,10 @@ chrome.alarms.onAlarm.addListener(alarm => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || msg.type !== 'probe') return;
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.min(120000, Math.max(20000, (msg.payload?.ips?.length || 1) * 1000)));
   fetch(ENDPOINT, {
+    signal: controller.signal,
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(msg.payload)
@@ -42,6 +50,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!r.ok) throw new Error('HTTP ' + r.status + ': ' + text);
     return JSON.parse(text);
   }).then(data => sendResponse({ok:true, data}))
-    .catch(err => sendResponse({ok:false, error:String(err)}));
+    .catch(err => sendResponse({ok:false, error:String(err)}))
+    .finally(() => clearTimeout(timer));
   return true;
 });

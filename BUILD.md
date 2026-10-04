@@ -22,6 +22,7 @@ The resulting executable is produced under `dist\WallCheck-Agent.exe` with PyIns
 ```powershell
 node --check browser-extension\content.js
 node --check browser-extension\background.js
+node tests\extension-regression.cjs
 Get-Content browser-extension\manifest.json -Raw | ConvertFrom-Json | Out-Null
 ```
 
