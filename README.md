@@ -42,7 +42,7 @@ See `docs/操作步骤.txt` for the full Chinese guide.
 
 The current source includes recovery fixes on top of 1.6.1. Published 1.6.1 release ZIPs predate these fixes.
 
-For the local v1.7 upgrade on this Windows host, an installed per-user Startup launcher runs a hidden watchdog. It checks localhost agent health every minute and restarts the agent when missing; recovery events are written to `logs/watchdog-events.jsonl`. The portable 1.6.1 release ZIP alone does not install this watchdog. Manual Stop pauses the watchdog until manual Start.
+For the local v1.7 upgrade on this Windows host, an installed per-user Startup launcher runs a hidden watchdog. The persistent supervisor checks localhost every minute within its own process; during healthy cycles it does not launch a new PowerShell child. The existing guarded recovery script is invoked only if the local probe fails. Recovery events are written to `logs/watchdog-events.jsonl`. The portable 1.6.1 release ZIP alone does not install this watchdog. Manual Stop pauses the watchdog until manual Start.
 
 The extension restores its latest completed results from `chrome.storage.local` and immediately rechecks on page load. Browser startup also restores the 10-minute alarm and requests a recheck. If the local probe or message channel fails, the extension retains previous results, displays the error, and retries after 15 seconds. A completed probe with no positive reachability evidence is still a new result and updates the displayed status.
 
