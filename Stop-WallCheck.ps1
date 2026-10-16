@@ -1,26 +1,20 @@
-$ErrorActionPreference = 'SilentlyContinue'
-$healthUrl = 'http://127.0.0.1:17654/healthz'
-
-$owned = $false
-try {
-    $h = Invoke-RestMethod $healthUrl -TimeoutSec 1
-    if ($h.ok -and $h.agent -eq 'wallcheck-portable-v1.6.1') {
-        $owned = $true
-    }
-} catch {}
-
-$listener = Get-NetTCPConnection -LocalPort 17654 -State Listen -ErrorAction SilentlyContinue
-if (-not $listener) {
-    Write-Host 'WallCheck is not running.'
+$ErrorActionPreference='Stop'
+$base=$PSScriptRoot
+$logs=Join-Path $base 'logs'
+New-Item -ItemType Directory -Path $logs -Force | Out-Null
+[System.IO.File]::WriteAllText((Join-Path $logs 'paused.flag'), (Get-Date).ToString('o'))
+$url='http://127.0.0.1:17654/healthz'
+try{
+    $h=Invoke-RestMethod $url -TimeoutSec 2
+    if($h.agent -ne 'wallcheck-portable-v1.6.1'){ throw 'unexpected agent identity' }
+}catch{
+    Write-Host 'No confirmed local WallCheck listener; watchdog paused.'
     exit 0
 }
-
-if (-not $owned) {
-    Write-Host 'Port 17654 is in use, but it is not confirmed as WallCheck Portable. Nothing was stopped.' -ForegroundColor Yellow
-    Write-Host ('PID: ' + $listener.OwningProcess)
-    exit 2
+$exe=(Resolve-Path (Join-Path $base 'WallCheck-Agent.exe')).Path
+$found=@(Get-CimInstance Win32_Process -Filter "name='WallCheck-Agent.exe'" |
+    Where-Object { $_.ExecutablePath -eq $exe })
+foreach($item in ($found | Sort-Object -Property ParentProcessId -Descending)){
+    Stop-Process -Id $item.ProcessId -Force -ErrorAction SilentlyContinue
 }
-
-Stop-Process -Id $listener.OwningProcess -Force
-Start-Sleep -Milliseconds 300
-Write-Host 'WallCheck stopped.' -ForegroundColor Green
+Write-Host 'WallCheck stopped. Watchdog paused until manual Start.' -ForegroundColor Green

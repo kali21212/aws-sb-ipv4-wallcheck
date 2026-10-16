@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.7.0 - local upgrade 2026-10-16
+
+- Front-end probes ICMP plus TCP port 22 only (TCP 80/443 removed).
+- Persistent IPv4 A->B->C transition history, keyed by EC2 ID or numbered card, with manual acknowledgement.
+- Unacknowledged IP-change markers do not blink or expire after one hour.
+- Alerts for host unconfirmed reachable, SSH port 22 failure, and local agent/API failure; transition deduplication.
+- Browser notification permission and persistent on-page fallback alert panel.
+- User-scoped Windows watchdog, health-state and recovery JSONL logging, optional scheduled-task installer.
+- Existing portable agent binary remains 1.6.1 and runs with frontend-provided port 22; rebuilt future source enforces 22 only.
+- Reload unpacked extension once in Thorium to activate these JavaScript updates.
+
 ## Unreleased — recovery fixes for 1.6.1
 
 - Persist the latest completed probe results by IPv4 and port configuration and restore them before startup revalidation.

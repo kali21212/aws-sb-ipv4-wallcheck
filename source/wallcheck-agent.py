@@ -89,13 +89,8 @@ def normalize_request(data):
         if len(ips) >= 1000:
             break
 
-    raw_ports = data.get("ports") or [22, 80, 443]
-    ports = sorted({
-        int(p) for p in raw_ports
-        if str(p).isdigit() and 1 <= int(p) <= 65535
-    })
-    if not ports:
-        ports = [22, 80, 443]
+    # v1.7.0 source enforces port 22; existing prebuilt 1.6.1 binary remains compatible.
+    ports = [22]
 
     timeout_ms = int(data.get("timeout_ms") or 1500)
     timeout_ms = timeout_ms if 1 <= timeout_ms <= 10000 else 1500

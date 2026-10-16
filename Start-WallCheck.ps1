@@ -1,5 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $base = $PSScriptRoot
+$paused = Join-Path $base 'logs\paused.flag'
+if (Test-Path -LiteralPath $paused) { Remove-Item -LiteralPath $paused -Force }
 $exe = Join-Path $base 'WallCheck-Agent.exe'
 $healthUrl = 'http://127.0.0.1:17654/healthz'
 

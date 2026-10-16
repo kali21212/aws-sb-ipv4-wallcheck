@@ -3,7 +3,9 @@
 
   const CACHE_MS = 5 * 60 * 1000;
   const AUTO_RECHECK_MINUTES = 10;
-  const IP_CHANGE_MARK_MS = 1 * 60 * 60 * 1000;
+  const ALERT_KEY = 'wallcheck_alert_events_v1';
+  const CONDITION_KEY = 'wallcheck_condition_states_v1';
+  const ONLY_PORTS = [22];
   const INSTANCE_STATE_KEY = 'wallcheck_instance_state_v1';
   const cache = new Map();
   const lastCombined = new Map();
@@ -12,6 +14,9 @@
   let pendingCheck = false;
   let pendingForce = false;
   let retryTimer = null;
+  let alertEvents = [];
+  let conditionStates = {};
+  let alertsHydrated = false;
   const storageGet = keys => new Promise((resolve, reject) => {
     chrome.storage.local.get(keys, data => {
       const err = chrome.runtime.lastError;
@@ -84,8 +89,14 @@
     const best = new Map();
 
     for (const el of candidates) {
-      if (el.closest('#wallcheck-panel,#wallcheck-ip-change-toast,.wallcheck-badge,.wallcheck-change-badge')) continue;
-      const txt = (el.innerText || el.textContent || '').trim();
+      if (el.closest('#wallcheck-panel,#wallcheck-alert-center,.wallcheck-badge,.wallcheck-change-badge')) continue;
+      // Badges themselves include historical IPv4 values; never re-add those as targets.
+      let txt = (el.innerText || el.textContent || '').trim();
+      if (el.querySelector?.('.wallcheck-badge,.wallcheck-change-badge')) {
+        const clean = el.cloneNode(true);
+        clean.querySelectorAll('.wallcheck-badge,.wallcheck-change-badge').forEach(x=>x.remove());
+        txt = (clean.innerText || clean.textContent || '').trim();
+      }
       if (!txt || txt.length > 240) continue;
 
       const ips = extractIPv4(txt);
@@ -112,18 +123,38 @@
     return null;
   }
 
+function findInstanceLabelNear(cell, ip) {
+    let node = cell;
+    for (let depth = 0; node && node !== document.body && depth < 12; depth++, node = node.parentElement) {
+      const text = (node.innerText || node.textContent || '').trim();
+      if (!text.includes(ip) || text.length > 3000) continue;
+      const heads = [...text.matchAll(/#\s*(\d{1,4})\b/g)];
+      if (heads.length !== 1) continue;
+      const h = heads[0];
+      const lines = text.slice(h.index + h[0].length).split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+      let name = (lines[0] || '').replace(/^[\s✎✏🖉📝•·]+/gu,'').replace(/^编辑\s*/u,'').trim();
+      name = name.split(/\s{2,}|IPv[46]|地区|型号|配置时间|接近时间|剩余|状态|更换IP|IP\s/iu)[0].trim();
+      if (!name) name = (lines.find(x=>x.length <= 32 && !/^(IP|IPv|型号|地区|配置|剩余|状态)/.test(x)) || '').slice(0,32);
+      return {slot:h[1],label:'#'+h[1]+(name ? ' '+name.slice(0,32) : '')};
+    }
+    return null;
+  }
   function collectInstanceRecords(ipCells) {
-    const records = new Map();
-    for (const [ip, cells] of ipCells) {
-      const cell = cells[0];
-      if (!cell) continue;
-      const instanceId = findInstanceIdNear(cell, ip);
-      if (instanceId) records.set(instanceId, {instanceId, ip, cell});
+    const records=new Map();
+    for(const [ip,cells] of ipCells) {
+      const cell=cells[0];
+      if(!cell) continue;
+      const official=findInstanceIdNear(cell,ip);
+      const display=findInstanceLabelNear(cell,ip);
+      const instanceId=official || (display ? 'aws-sb-slot-'+display.slot : null);
+      if(instanceId) records.set(instanceId,{
+        instanceId,ip,cell,label:display?.label || (official ? '实例 '+official : 'IPv4 '+ip)
+      });
     }
     return records;
   }
 
-  function syncInstanceState(records) {
+    function syncInstanceState(records) {
     return new Promise(resolve => {
       chrome.storage.local.get([INSTANCE_STATE_KEY, STORE_KEY], data => {
         const state = data[INSTANCE_STATE_KEY] && typeof data[INSTANCE_STATE_KEY] === 'object'
@@ -132,14 +163,13 @@
         let storedIPs = Array.isArray(data[STORE_KEY]) ? data[STORE_KEY].filter(isIPv4) : [];
         const now = Date.now();
         const newChanges = [];
-        recentChanges.clear();
-
         for (const [instanceId, rec] of records) {
           const prev = state[instanceId];
 
           if (!prev) {
             state[instanceId] = {
               ip: rec.ip,
+              label: rec.label,
               firstSeenAt: now,
               lastSeenAt: now,
               history: []
@@ -150,6 +180,7 @@
             state[instanceId] = {
               ...prev,
               ip: rec.ip,
+              label: rec.label,
               previousIp: prev.ip,
               changedAt: now,
               lastSeenAt: now,
@@ -160,23 +191,14 @@
               instanceId,
               oldIp: prev.ip,
               newIp: rec.ip,
+              label: rec.label,
               changedAt: now
             });
           } else {
-            state[instanceId] = {...prev, lastSeenAt: now};
+            state[instanceId] = {...prev, label:rec.label, lastSeenAt: now};
           }
 
-          const current = state[instanceId];
-          if (current.changedAt && current.previousIp &&
-              now - current.changedAt < IP_CHANGE_MARK_MS &&
-              current.ip === rec.ip) {
-            recentChanges.set(rec.ip, {
-              instanceId,
-              oldIp: current.previousIp,
-              newIp: current.ip,
-              changedAt: current.changedAt
-            });
-          }
+
         }
 
         storedIPs = [...new Set([...storedIPs, ...[...records.values()].map(x => x.ip)])].filter(isIPv4).sort();
@@ -188,28 +210,169 @@
     });
   }
 
-  function showChangeToast(changes) {
-    if (!changes.length) return;
-    document.getElementById('wallcheck-ip-change-toast')?.remove();
-    const toast = document.createElement('div');
-    toast.id = 'wallcheck-ip-change-toast';
-    toast.className = 'wallcheck-toast';
-    const first = changes[0];
-    toast.innerHTML =
-      '<strong>🔄 检测到 IP 变更</strong><br>' +
-      first.instanceId + '<br>' +
-      first.oldIp + ' → ' + first.newIp +
-      (changes.length > 1 ? '<br>另有 ' + (changes.length - 1) + ' 台实例变更' : '');
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 8000);
+  async function hydrateAlerts() {
+    if(alertsHydrated)return;
+    const data=await storageGet([ALERT_KEY,CONDITION_KEY]);
+    alertEvents=Array.isArray(data[ALERT_KEY])?data[ALERT_KEY].filter(e=>e?.id && e?.kind):[];
+    conditionStates=data[CONDITION_KEY] && typeof data[CONDITION_KEY]==='object'?data[CONDITION_KEY]:{};
+    alertsHydrated=true;
+    refreshChangeMarkers();
+    renderAlerts();
   }
 
-  function parsePorts() {
-    const raw = document.getElementById('wallcheck-ports')?.value || '22,80,443';
-    const ports = [...new Set(raw.split(',').map(x => Number(x.trim()))
-      .filter(x => Number.isInteger(x) && x >= 1 && x <= 65535))];
-    return ports.length ? ports.sort((a,b)=>a-b) : [22,80,443];
+  function refreshChangeMarkers() {
+    recentChanges.clear();
+    for(const event of alertEvents)
+      if(event.kind==='IP_CHANGE' && !event.acknowledged)
+        recentChanges.set(event.newIp,event);
   }
+
+  async function persistAlerts() {
+    const pending=alertEvents.filter(e=>!e.acknowledged);
+    const acknowledged=alertEvents.filter(e=>e.acknowledged).slice(-100);
+    alertEvents=[...acknowledged,...pending].sort((a,b)=>a.createdAt-b.createdAt);
+    await storageSet({[ALERT_KEY]:alertEvents,[CONDITION_KEY]:conditionStates});
+    refreshChangeMarkers();
+    renderAlerts();
+  }
+
+  function dispatchNotification(event) {
+    const title=event.kind==='IP_CHANGE'?event.label+' · IPv4 已变化':
+      event.kind==='PORT22_UNREACHABLE'?event.label+' · TCP22不可访问':
+      event.kind==='HOST_UNREACHABLE'?event.label+' · 未确认主机可达':
+      'WallCheck · 检测服务故障';
+    const message=event.kind==='IP_CHANGE'?event.oldIp+' → '+event.newIp:
+      (event.ip?event.ip+'｜':'')+(event.reason||'请检查本机检测服务');
+    try {
+      chrome.runtime.sendMessage({type:'notify',event:{id:event.id,title,message}},()=>{
+        void chrome.runtime.lastError;
+      });
+    }catch(_){ /* page alert persists if system notification is blocked */ }
+  }
+
+  async function appendAlert(event) {
+    if(alertEvents.some(x=>x.id===event.id))return;
+    alertEvents.push({...event,acknowledged:false});
+    await persistAlerts();
+    dispatchNotification(event);
+  }
+
+  async function recordChangeAlerts(changes) {
+    for(const change of changes){
+      await appendAlert({
+        id:'IP_CHANGE:'+change.instanceId+':'+change.changedAt+':'+change.newIp,
+        kind:'IP_CHANGE',instanceId:change.instanceId,
+        label:change.label||change.instanceId,
+        oldIp:change.oldIp,newIp:change.newIp,createdAt:change.changedAt
+      });
+    }
+  }
+
+  async function refreshLabels(records) {
+    let changed=false;
+    for(const e of alertEvents){
+      const rec=records.get(e.instanceId);
+      if(rec?.label && rec.label!==e.label){e.label=rec.label;changed=true;}
+    }
+    if(changed)await persistAlerts();
+  }
+
+  async function updateAgentHealth(ok,reason='') {
+    const next=ok?'OK':'AGENT_OFFLINE';
+    if(conditionStates.__agent===next)return;
+    conditionStates.__agent=next;
+    if(!ok){
+      await appendAlert({
+        id:'AGENT_OFFLINE:'+Date.now(),kind:'AGENT_OFFLINE',
+        label:'本机检测服务',createdAt:Date.now(),
+        reason:String(reason).slice(0,220)
+      });
+    } else await persistAlerts();
+  }
+
+  async function updateReachability(records,combined){
+    let changed=false;
+    for(const rec of records.values()){
+      const state=combined.get(rec.ip)?.key;
+      if(!state || state==='LOCAL_OFFLINE' || state==='UNKNOWN')continue;
+      const next=state==='LOCAL_FAIL'?'HOST_UNREACHABLE':
+        state==='PORT_22_UNREACHABLE'?'PORT22_UNREACHABLE':'OK';
+      if(conditionStates[rec.instanceId]===next)continue;
+      conditionStates[rec.instanceId]=next;
+      changed=true;
+      if(next!=='OK')await appendAlert({
+        id:next+':'+rec.instanceId+':'+Date.now(),
+        kind:next,instanceId:rec.instanceId,label:rec.label,
+        ip:rec.ip,createdAt:Date.now(),
+        reason:next==='PORT22_UNREACHABLE'?'本机 TCP 22 未开放':
+          '本机 Ping 与 TCP 22 均未确认可达'
+      });
+    }
+    if(changed)await persistAlerts();
+  }
+
+  async function acknowledgeAlerts(ids){
+    await hydrateAlerts();
+    const wanted=new Set(ids);
+    let changed=false;
+    for(const event of alertEvents) {
+      if(wanted.has(event.id) && !event.acknowledged){
+        event.acknowledged=true;
+        event.acknowledgedAt=Date.now();
+        changed=true;
+      }
+    }
+    if(!changed)return;
+    await persistAlerts();
+    applyBadges(collectIPCells(),lastCombined);
+  }
+
+  function renderAlerts() {
+    const panel=document.getElementById('wallcheck-alert-center');
+    if(!panel || typeof panel.replaceChildren!=='function')return;
+    const pending=alertEvents.filter(e=>!e.acknowledged);
+    panel.replaceChildren();
+    panel.style.display=pending.length?'block':'none';
+    if(!pending.length)return;
+    const create=(tag,cls,txt)=>{
+      const el=document.createElement(tag);
+      if(cls)el.className=cls;
+      if(txt!==undefined)el.textContent=txt;
+      return el;
+    };
+    panel.appendChild(create('div','wc-alert-header','WallCheck 告警 · '+pending.length+' 条待确认'));
+    const groups=new Map();
+    for(const event of pending){
+      const key=event.kind==='IP_CHANGE'?'change:'+event.instanceId:event.id;
+      if(!groups.has(key))groups.set(key,[]);
+      groups.get(key).push(event);
+    }
+    for(const entries of groups.values()){
+      const event=entries[0];
+      const block=create('div','wc-alert-entry');
+      const heading=event.kind==='IP_CHANGE'?'🔄 '+event.label+' · IP变化 '+entries.length+' 次':
+        event.kind==='AGENT_OFFLINE'?'⛔ 本机检测服务故障':
+        event.kind==='PORT22_UNREACHABLE'?'🔴 '+event.label+' · 22端口不可访问':
+        '🔴 '+event.label+' · 主机未确认可达';
+      block.appendChild(create('div','wc-alert-title',heading));
+      for(const e of entries){
+        const msg=e.kind==='IP_CHANGE'?e.oldIp+' → '+e.newIp:
+          (e.ip?e.ip+'｜':'')+(e.reason||'');
+        block.appendChild(create('div','wc-alert-detail',
+          new Date(e.createdAt).toLocaleString()+'  '+msg));
+      }
+      const ack=create('button','wc-ack-button','已知 · 不再提示');
+      ack.type='button';
+      ack.addEventListener('click',evt=>{
+        evt.preventDefault();evt.stopPropagation();
+        acknowledgeAlerts(entries.map(x=>x.id)).catch(console.error);
+      });
+      block.appendChild(ack);
+      panel.appendChild(block);
+    }
+  }
+
+  function parsePorts(){ return ONLY_PORTS.slice(); }
 
   function probe(ips, ports) {
     return new Promise((resolve, reject) => {
@@ -228,29 +391,20 @@
     return m;
   }
 
-  function classify(ip, localResp) {
-    const local = localResp?.results?.[ip];
-    if (!local) return {key:'LOCAL_OFFLINE', text:'❓ 本机探针无结果'};
-
-    const lm = portStates(local);
-    const localOpen = [...lm].filter(([,s]) => s === 'OPEN').map(([p]) => p);
-    const localTCPResponded = [...lm.values()].some(s => s === 'OPEN' || s === 'REFUSED');
-    const localPing = local?.icmp?.state === 'REACHABLE';
-
-    if (localPing && localOpen.length)
-      return {key:'LOCAL_OK', text:'✅ 主机可达｜端口可用:' + localOpen.join('/')};
-    if (localPing)
-      return {key:'HOST_OK', text:'✅ 主机可达｜未发现开放端口'};
-    if (localOpen.length)
-      return {key:'LOCAL_OK', text:'✅ 端口可用:' + localOpen.join('/') + '｜Ping无回应'};
-    if (localTCPResponded)
-      return {key:'HOST_OK', text:'✅ 主机可达｜端口已关闭'};
-
-    return {key:'LOCAL_FAIL', text:'⚠ 本机未确认可达'};
+function classify(ip,localResp) {
+    const local=localResp?.results?.[ip];
+    if(!local)return {key:'LOCAL_OFFLINE',text:'❓ 本机探针无结果'};
+    const tcp22=portStates(local).get(22);
+    const ping=local.icmp?.state==='REACHABLE';
+    if(tcp22==='OPEN')return {key:'LOCAL_OK',text:'✅ 22端口可达'+(ping?'｜Ping可达':'｜Ping无回应')};
+    if(ping || tcp22==='REFUSED')
+      return {key:'PORT_22_UNREACHABLE',text:'🔴 主机可达｜22端口不可访问'};
+    return {key:'LOCAL_FAIL',text:'⚠ 本机未确认主机可达（Ping/22均失败）'};
   }
-  function badgeClass(key) {
+
+    function badgeClass(key) {
     if (key === 'LOCAL_OK' || key === 'HOST_OK') return 'wc-ok';
-    if (key === 'LOCAL_FAIL') return 'wc-warn';
+    if (key === 'LOCAL_FAIL' || key === 'PORT_22_UNREACHABLE') return 'wc-bad';
     return 'wc-unknown';
   }
 
@@ -275,11 +429,20 @@
           const changeBadge = document.createElement('span');
           changeBadge.className = 'wallcheck-change-badge';
           changeBadge.dataset.ip = ip;
-          changeBadge.textContent = '🔄 IP已变更';
-          changeBadge.title =
-            change.instanceId + '\n' +
-            change.oldIp + ' → ' + change.newIp + '\n' +
-            '变更时间：' + new Date(change.changedAt).toLocaleString();
+          changeBadge.textContent = 'IP已变更：' + change.oldIp + ' → ' + change.newIp + ' ';
+          changeBadge.title = (change.label || change.instanceId) + '\n' +
+            '变更时间：' + new Date(change.createdAt).toLocaleString();
+          const ack = document.createElement('button');
+          ack.type = 'button';
+          ack.className = 'wc-inline-ack';
+          ack.textContent = '已知';
+          ack.addEventListener('click', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            acknowledgeAlerts(alertEvents.filter(x => !x.acknowledged && x.kind === 'IP_CHANGE' &&
+              x.instanceId === change.instanceId).map(x => x.id)).catch(console.error);
+          });
+          changeBadge.appendChild(ack);
           cell.appendChild(changeBadge);
         }
       }
@@ -292,20 +455,30 @@
     if (running) { pendingCheck = true; pendingForce ||= force; return; }
     const panel = document.getElementById('wallcheck-panel');
     if (!panel) return;
-    if (!isEC2Route()) { panel.style.display = 'none'; return; }
+    if (!isEC2Route()) {
+      panel.style.display = 'none';
+      const alerts=document.getElementById('wallcheck-alert-center');
+      if(alerts)alerts.style.display='none';
+      return;
+    }
     panel.style.display = 'block';
+    if(alertsHydrated)renderAlerts();
     running = true;
     let ipCells;
     let previous = new Map();
     try {
       ipCells = collectIPCells();
       const currentIPs = [...ipCells.keys()];
-      const syncResult = await syncInstanceState(collectInstanceRecords(ipCells));
+      const instanceRecords = collectInstanceRecords(ipCells);
+      await hydrateAlerts();
+      const syncResult = await syncInstanceState(instanceRecords);
+      await refreshLabels(instanceRecords);
       if (syncResult.newChanges.length) {
         cache.clear();
         force = true;
-        showChangeToast(syncResult.newChanges);
+        await recordChangeAlerts(syncResult.newChanges);
       }
+      refreshChangeMarkers();
       const ips = await mergeStoredIPs(currentIPs);
       document.getElementById('wallcheck-count').textContent = '当前 ' + currentIPs.length + ' / 列表 ' + ips.length + (recentChanges.size ? ' / IP变更 ' + recentChanges.size : '');
       if (!ips.length) { document.getElementById('wallcheck-status').textContent = '未发现 IPv4'; return; }
@@ -328,6 +501,7 @@
       document.getElementById('wallcheck-status').textContent = previous.size ? '已恢复上次有效结果 · 正在重新验证' : '检测中 · ' + ips.length + ' 个 IPv4';
       const localResp = await probe(ips, ports);
       if (!localResp?.results || ips.some(ip => !localResp.results[ip])) throw new Error('本机探针返回不完整结果');
+      await updateAgentHealth(true);
       const combined = new Map();
       const checkedAt = Date.now();
       for (const ip of ips) {
@@ -342,11 +516,15 @@
       lastFinishedAt = new Date(checkedAt);
       cache.set(key, {time:checkedAt, value:combined});
       applyBadges(ipCells, combined);
+      await updateReachability(instanceRecords, combined);
       document.getElementById('wallcheck-status').textContent = '本机探针✓ · ' + ips.length + ' 个 IPv4 · ' + lastFinishedAt.toLocaleTimeString();
       document.getElementById('wallcheck-status').title = '';
     } catch (err) {
       cache.clear();
       if (ipCells) applyBadges(ipCells, previous);
+      if (alertsHydrated) {
+        try { await updateAgentHealth(false,err.message||String(err)); }catch(_){}
+      }
       const status = document.getElementById('wallcheck-status');
       status.textContent = '⚠ 本次检测失败｜' + (previous.size ? '保留上次有效结果' : '本机探针不可用') + '｜15秒后重试';
       status.title = String(err.message || err);
@@ -371,7 +549,14 @@
       #wallcheck-panel input[type=text]{width:105px;padding:4px}
       .wallcheck-badge{display:inline-block;margin-left:8px;padding:1px 6px;border-radius:10px;font-size:12px;white-space:nowrap}
       .wallcheck-change-badge{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:10px;font-size:12px;white-space:nowrap;background:#fff3e0;color:#b45309;font-weight:700;border:1px solid #fed7aa}
-      #wallcheck-ip-change-toast{position:fixed;right:16px;bottom:190px;z-index:2147483647;max-width:330px;padding:12px 14px;border-radius:10px;background:#fff7ed;color:#9a3412;border:1px solid #fdba74;box-shadow:0 8px 30px #0003;font:13px/1.5 Segoe UI,sans-serif}
+      #wallcheck-alert-center{position:fixed;right:16px;bottom:190px;z-index:2147483646;width:min(420px,calc(100vw - 32px));max-height:48vh;overflow:auto;padding:10px;border:1px solid #fdba74;border-radius:10px;background:#fffaf0;color:#713f12;box-shadow:0 8px 30px #0003;font:13px/1.5 Segoe UI,sans-serif}
+      .wc-alert-header{font-weight:700;margin-bottom:8px}
+      .wc-alert-entry{background:#fff;border:1px solid #fcd9a4;border-radius:8px;padding:8px;margin-top:7px}
+      .wc-alert-title{font-weight:700;color:#92400e}
+      .wc-alert-detail{overflow-wrap:anywhere;font-size:12px;margin:4px 0}
+      .wc-ack-button,.wc-inline-ack{border:1px solid #e8ba73;border-radius:5px;background:#fff;color:#7c3f12;cursor:pointer;padding:2px 6px;margin:3px 0}
+      .wc-inline-ack{margin-left:8px}
+      .wallcheck-change-badge{animation:none!important;transition:none!important}
       .wc-ok{background:#e8f5e9;color:#146c2e}.wc-bad{background:#ffebee;color:#b42318;font-weight:700}
       .wc-warn{background:#fff8e1;color:#8a5700}.wc-unknown{background:#f1f3f4;color:#555}
     `;
@@ -380,34 +565,37 @@
     const panel = document.createElement('div');
     panel.id = 'wallcheck-panel';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck Portable</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.7.0</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
-      <div class="row"><label>端口 <input id="wallcheck-ports" type="text" value="22,80,443"></label><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空列表</button></div>
-      <div style="color:#666;margin-top:7px">本机 ICMP + TCP 双层检测；每 ${AUTO_RECHECK_MINUTES} 分钟复检。IP变更橙色标记保留1小时。</div>
+      <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空列表</button></div>
+      <div style="color:#666;margin-top:7px">本机 ICMP + TCP 双层检测；每 ${AUTO_RECHECK_MINUTES} 分钟复检。IP变化待人工确认，不自动消失。</div>
     `;
     document.body.appendChild(panel);
+    const alertCenter=document.createElement('div');
+    alertCenter.id='wallcheck-alert-center';
+    alertCenter.style.display='none';
+    document.body.appendChild(alertCenter);
     panel.querySelector('#wallcheck-run').addEventListener('click',()=>runCheck(true));
-    panel.querySelector('#wallcheck-ports').addEventListener('change',()=>runCheck(true));
     panel.querySelector('#wallcheck-clear').addEventListener('click', async () => {
       await clearStoredIPs();
       cache.clear();
       lastCombined.clear();
       await storageSet({[RESULT_KEY]: {}});
       document.querySelectorAll('.wallcheck-badge,.wallcheck-change-badge').forEach(x => x.remove());
-      document.getElementById('wallcheck-ip-change-toast')?.remove();
       runCheck(true);
     });
 
     const observer = new MutationObserver(mutations => {
       if (mutatingBadges) return;
       const relevant = mutations.some(m =>
-        (m.type === 'characterData' && !m.target.parentElement?.closest('#wallcheck-panel,#wallcheck-ip-change-toast,.wallcheck-badge,.wallcheck-change-badge')) ||
+        (m.type === 'characterData' && !m.target.parentElement?.closest('#wallcheck-panel,#wallcheck-alert-center,.wallcheck-badge,.wallcheck-change-badge')) ||
         [...m.addedNodes, ...m.removedNodes].some(n =>
           n.nodeType === 1 &&
           !n.classList?.contains('wallcheck-badge') &&
           !n.classList?.contains('wallcheck-change-badge') &&
-          !n.classList?.contains('wallcheck-toast') &&
-          !n.closest?.('#wallcheck-panel')
+          !n.classList?.contains('wallcheck-alert-ui') &&
+          n.id !== 'wallcheck-alert-center' &&
+          !n.closest?.('#wallcheck-panel,#wallcheck-alert-center')
         )
       );
       if (!relevant) return;
@@ -422,17 +610,7 @@
 
     window.addEventListener('hashchange', () => setTimeout(()=>runCheck(false), 250));
     setTimeout(()=>runCheck(true), 600);
-    setInterval(() => {
-      if (!isEC2Route()) return;
-      for (const [ip, change] of recentChanges) {
-        if (Date.now() - change.changedAt >= IP_CHANGE_MARK_MS) {
-          recentChanges.delete(ip);
-          document.querySelectorAll('.wallcheck-change-badge').forEach(b => {
-            if (b.dataset.ip === ip) b.remove();
-          });
-        }
-      }
-    }, 1000);
+
   }
 
   install();

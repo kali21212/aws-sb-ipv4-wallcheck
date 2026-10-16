@@ -6,10 +6,10 @@ It combines a Chromium extension with a localhost probe to:
 
 - automatically detect IPv4 addresses on `aws.sb/#/ec2-instances`;
 - ignore IPv6 completely;
-- test ICMP reachability plus TCP ports 22/80/443;
+- test ICMP reachability plus TCP port 22 only;
 - automatically recheck every 10 minutes;
 - detect when the IPv4 of the same EC2 instance ID changes;
-- highlight IP changes for 1 hour and immediately probe the new IPv4;
+- retain unacknowledged IPv4 change history until manually acknowledged (no flashing) and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
 
 ## Portable release
@@ -42,11 +42,11 @@ See `docs/操作步骤.txt` for the full Chinese guide.
 
 The current source includes recovery fixes on top of 1.6.1. Published 1.6.1 release ZIPs predate these fixes.
 
-After Windows restarts, run `启动 WallCheck.cmd` before opening the instances page. The package does not install a login startup item.
+For the local v1.7 upgrade on this Windows host, an installed per-user Startup launcher runs a hidden watchdog. It checks localhost agent health every minute and restarts the agent when missing; recovery events are written to `logs/watchdog-events.jsonl`. The portable 1.6.1 release ZIP alone does not install this watchdog. Manual Stop pauses the watchdog until manual Start.
 
 The extension restores its latest completed results from `chrome.storage.local` and immediately rechecks on page load. Browser startup also restores the 10-minute alarm and requests a recheck. If the local probe or message channel fails, the extension retains previous results, displays the error, and retries after 15 seconds. A completed probe with no positive reachability evidence is still a new result and updates the displayed status.
 
-Results are keyed by IPv4 and the selected ports so a changed IP or port configuration does not reuse a different target's result.
+Results are keyed by IPv4 and TCP port 22, so changes cannot reuse another target's result.
 
 ## Result meanings
 
@@ -70,7 +70,14 @@ When the same instance ID changes from one IPv4 to another:
 - the new IPv4 is immediately rechecked;
 - the old IPv4 is removed from the active scan list;
 - limited local history is retained;
-- the orange change marker remains for 1 hour.
+- consecutive changes A->B and B->C are shown as separate unacknowledged events;
+- the yellow change marker never blinks or expires until the user presses \`已知\`;
+- the label uses the EC2 instance number and its displayed custom name where available;
+- desktop notifications are sent once per new event; the on-page alert panel persists if system notifications are unavailable.
+
+## Local v1.7 notifications
+
+Reload the unpacked extension once from \`thorium://extensions\`, then refresh \`https://aws.sb/#/ec2-instances\`. Browser notifications require the operating system to allow notifications. If the extension itself is disabled, it cannot generate a browser notification; the Windows watchdog covers the local agent, not the browser extension.
 
 ## Privacy
 
