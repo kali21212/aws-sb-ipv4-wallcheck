@@ -2,6 +2,7 @@
 
 ## 1.7.1 - local maintenance 2026-10-16
 
+- Reduce Event Log noise from the Windows watchdog: use an in-process one-minute localhost heartbeat and spawn the guarded recovery script only when agent health fails; preserve manual pause, recovery and logs.
 - Recovered agent/extension context failures move out of active alerts after a successful fresh probe.
 - Preserve the resolved error timestamp and reason in a collapsed history entry beneath the control panel.
 - Do not auto-acknowledge, archive, or otherwise alter unresolved IPv4 A->B->C change alerts.
