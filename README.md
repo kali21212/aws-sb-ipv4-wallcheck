@@ -48,6 +48,14 @@ The extension restores its latest completed results from `chrome.storage.local` 
 
 Results are keyed by IPv4 and TCP port 22, so changes cannot reuse another target's result.
 
+### Restored fault history (local v1.7.1)
+
+A probe or extension context failure remains active only while unresolved. A fresh successful probe marks historical agent/extension failures as recovered; the original fault event remains locally persisted and can be expanded from the small "检测已恢复" history under the panel. An IPv4 address change remains unacknowledged until the user explicitly selects "已知".
+
+Windows watchdog notifications are emitted from the standalone local \`notifier/WallCheck.exe\`, assembled from the auditable C# source under \`notifier/WallCheck.cs\`. This removes the "Windows PowerShell" sender identity caused by direct PowerShell NotifyIcon calls. The notifier is independent of the probe executable, does not need a server, and does not access network or account data. Sender display can vary by Windows notification settings.
+
+The notifier identity is registered per user by `Install-WallCheck-Notifier.ps1`, which creates a Start Menu shortcut and assigns the matching `Charlie.WallCheck` AppUserModelID. See `notifier/README.md` for reproducible build and install steps.
+
 ## Result meanings
 
 Examples:

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.1 - local maintenance 2026-10-16
+
+- Recovered agent/extension context failures move out of active alerts after a successful fresh probe.
+- Preserve the resolved error timestamp and reason in a collapsed history entry beneath the control panel.
+- Do not auto-acknowledge, archive, or otherwise alter unresolved IPv4 A->B->C change alerts.
+- Run local recovery notifications from a dedicated WallCheck.exe with application identity "WallCheck" instead of PowerShell.
+- Register per-user Start Menu shortcut with explicit AppUserModelID `Charlie.WallCheck`, matching the notifier process identity.
+- No changes to ICMP/TCP22 probing interval, existing agent executable, instance mapping, or manual IP acknowledgement.
+
 ## 1.7.0 - local upgrade 2026-10-16
 
 - Front-end probes ICMP plus TCP port 22 only (TCP 80/443 removed).
