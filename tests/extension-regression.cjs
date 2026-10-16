@@ -7,7 +7,7 @@ const node=()=>({style:{},children:[],dataset:{},classList:{contains:()=>false},
 function boot(){
  let src=fs.readFileSync(path.join(root,'content.js'),'utf8');
  assert(src.includes('  install();'));
- src=src.replace('  install();',"  globalThis.api={runCheck,classify,findInstanceLabelNear,acknowledgeAlerts,get events(){return alertEvents;},get changes(){return recentChanges;},set(c,r){collectIPCells=()=>c;collectInstanceRecords=()=>r;}};");
+ src=src.replace('  install();',"  globalThis.api={runCheck,classify,findInstanceLabelNear,isPageMutationRelevant,collectInstanceRecordsOriginal:collectInstanceRecords,acknowledgeAlerts,get events(){return alertEvents;},get changes(){return recentChanges;},set(c,r){collectIPCells=()=>c;collectInstanceRecords=()=>r;}};");
  const ids=['wallcheck-panel','wallcheck-count','wallcheck-status','wallcheck-alert-center'];
  const nodes=new Map(ids.map(id=>[id,node()])),timers=[];
  const chrome={runtime:{lastError:null,sendMessage(m,cb){
@@ -33,6 +33,16 @@ async function scan(c,ip,label){c.api.set(cells(ip),records(ip,label));await c.a
  const raw=node(),card=node();raw.innerText='IP 192.0.2.1';raw.parentElement=card;
  card.innerText='#1 ✎ 待定组\nIP 192.0.2.1';card.parentElement=null;
  assert.equal(c.api.findInstanceLabelNear(raw,'192.0.2.1').label,'#1 待定组');
+ card.innerText='#2 🔗 老用户 24小时 剩余25天\nIP 192.0.2.1';
+ assert.equal(c.api.findInstanceLabelNear(raw,'192.0.2.1').label,'#2 老用户');
+ card.innerText='#1 ✎ 待定组 29天 剩余25天\nIP 192.0.2.1';
+ assert.equal(c.api.findInstanceLabelNear(raw,'192.0.2.1').label,'#1 待定组');
+ assert(c.api.collectInstanceRecordsOriginal(cells('192.0.2.8')).has('ip-target:192.0.2.8'));
+ const intern={nodeType:1,closest:()=>({})};
+ assert.equal(c.api.isPageMutationRelevant({type:'childList',target:intern,addedNodes:[{nodeType:1}],removedNodes:[]}),false);
+ const page={nodeType:1,closest:()=>null};
+ assert.equal(c.api.isPageMutationRelevant({type:'childList',target:page,addedNodes:[{nodeType:1,matches:()=>false,closest:()=>null}],removedNodes:[]}),true);
+ assert.equal(c.api.isPageMutationRelevant({type:'childList',target:page,addedNodes:[{nodeType:3,textContent:'IP 127.0.0.3'}],removedNodes:[]}),true);
  await scan(c,'192.0.2.1');
  assert(db.wallcheck_last_valid_results_v1['192.0.2.1::22']);
  assert.equal(calls.find(x=>x.type==='probe').payload.ports.join(','),'22');
@@ -54,15 +64,17 @@ async function scan(c,ip,label){c.api.set(cells(ip),records(ip,label));await c.a
  assert.equal(c.api.events.filter(x=>x.kind==='PORT22_UNREACHABLE').length,1);
  now+=60000;await scan(c,'192.0.2.4');
  assert.equal(c.api.events.filter(x=>x.kind==='PORT22_UNREACHABLE').length,1);
- mode='OPEN';now+=60000;await scan(c,'192.0.2.4');
- mode='FAIL';now+=60000;await scan(c,'192.0.2.4');
+ now+=60000;await scan(c,'192.0.2.5');
+ assert.equal(c.api.events.filter(x=>x.kind==='PORT22_UNREACHABLE').length,2);
+ mode='OPEN';now+=60000;await scan(c,'192.0.2.5');
+ mode='FAIL';now+=60000;await scan(c,'192.0.2.5');
  assert.equal(c.api.events.filter(x=>x.kind==='HOST_UNREACHABLE').length,1);
- offline=true;now+=60000;await scan(c,'192.0.2.4');
+ offline=true;now+=60000;await scan(c,'192.0.2.5');
  assert.equal(c.api.events.filter(x=>x.kind==='AGENT_OFFLINE').length,1);
- now+=60000;await scan(c,'192.0.2.4');
+ now+=60000;await scan(c,'192.0.2.5');
  assert.equal(c.api.events.filter(x=>x.kind==='AGENT_OFFLINE').length,1);
  assert(c.timers.includes(15000));
- offline=false;mode='OPEN';now+=60000;await scan(c,'192.0.2.4');
+ offline=false;mode='OPEN';now+=60000;await scan(c,'192.0.2.5');
  assert.equal(db.wallcheck_condition_states_v1.__agent,'OK');
  const listeners={},created=[];
  const bg={runtime:{lastError:null,getURL:x=>'chrome-extension://test/'+x,
