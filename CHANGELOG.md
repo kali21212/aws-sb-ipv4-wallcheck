@@ -9,6 +9,10 @@
 - Browser notification permission and persistent on-page fallback alert panel.
 - User-scoped Windows watchdog, health-state and recovery JSONL logging, optional scheduled-task installer.
 - Existing portable agent binary remains 1.6.1 and runs with frontend-provided port 22; rebuilt future source enforces 22 only.
+- Observe DOM text-node replacement (not just characterData) to catch actual reactive-page IP updates.
+- Scope reachability transitions to the current IPv4, preventing failure status from leaking across IP replacements.
+- Attempt a rate-limited Windows notification on local-agent recovery; log notification attempts and availability separately.
+- Add a real isolated Thorium end-to-end smoke test for A→B→C history, custom names, and acknowledgements.
 - Reload unpacked extension once in Thorium to activate these JavaScript updates.
 
 ## Unreleased — recovery fixes for 1.6.1

@@ -52,10 +52,10 @@ Results are keyed by IPv4 and TCP port 22, so changes cannot reuse another targe
 
 Examples:
 
-- `✅ 主机可达｜端口可用:22` — the host is reachable and TCP 22 is open.
-- `✅ 主机可达｜未发现开放端口` — ICMP is reachable, but none of the configured ports were found open.
-- `✅ 端口可用:22｜Ping无回应` — ICMP did not reply, but TCP 22 is reachable.
-- `⚠ 本机未确认可达` — this machine obtained no positive ICMP/TCP evidence in that probe.
+- `✅ 22端口可达｜Ping可达` — ICMP and TCP 22 both respond.
+- `✅ 22端口可达｜Ping无回应` — TCP 22 is open even if ICMP replies are blocked.
+- `🔴 主机可达｜22端口不可访问` — the host responds but TCP 22 is not open.
+- `⚠ 本机未确认主机可达` — neither ICMP nor TCP 22 confirms reachability.
 
 A failed local probe is **not** an absolute determination that an IP is blocked by the Great Firewall. Security groups, firewalls, routing, rate limits, packet loss, or temporary network conditions can produce similar symptoms.
 
@@ -84,6 +84,10 @@ Reload the unpacked extension once from \`thorium://extensions\`, then refresh \
 The extension sends only detected IPv4 addresses, configured TCP ports, and probe settings to the local agent on `127.0.0.1:17654`.
 
 It does not intentionally send aws.sb cookies, account credentials, page URLs, `sgt` values, or IPv6 addresses to an external service.
+
+## Tests
+
+Run `node tests/extension-regression.cjs` for isolated JavaScript regression checks. On a Windows machine with Thorium and a running localhost WallCheck agent, `python tests/thorium-smoke.py` runs an isolated browser profile against a synthetic EC2 page to verify real DOM changes, A→B→C history, display-name updates and the "已知" acknowledgement button. The optional browser test needs Python packages `requests` and `websocket-client`, and never uses real account credentials or changes production AWS instances.
 
 ## Build from source
 
