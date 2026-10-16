@@ -21,6 +21,9 @@ cmd=[str(BROWSER),'--headless=new','--no-first-run','--no-default-browser-check'
      '--load-extension='+str(EXT),'about:blank']
 proc=None
 ws=None
+wsA=None
+wsB=None
+wsC=None
 seq=0
 events=[]
 FAKE_HTML='''<!doctype html><html lang="zh-CN"><meta charset="utf-8">
@@ -28,9 +31,9 @@ FAKE_HTML='''<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <style>body{font:16px Arial;margin:30px}.card{padding:22px;border:1px solid gray;margin:12px;display:inline-block;vertical-align:top}</style>
 <body>
 <div class="card" id="card1"><div class="head">#1 ✎ 示例组一 29天 剩余25天</div>
-<div id="ip1">IP 127.0.0.1</div></div>
+<div id="ip1">IP 127.0.0.1</div><div>IPv6 2001:db8:123::2</div></div>
 <div class="card" id="card2"><div class="head">#2 🔗 示例账号二 24小时 剩余25天</div>
-<div id="ip2">IP 127.0.0.2</div></div>
+<div id="ip2">IP 127.0.0.2</div><div>IPv6 2001:db8:123::3</div></div>
 </body></html>'''
 fake=base64.b64encode(FAKE_HTML.encode('utf-8')).decode('ascii')
 
@@ -57,6 +60,9 @@ def cdp(method,params=None,wait=12):
         except websocket.WebSocketTimeoutException:continue
         if raw.get('method')=='Fetch.requestPaused':
             reply_paused(raw['params'])
+        if raw.get('method')=='Page.javascriptDialogOpening':
+            seq+=1
+            ws.send(json.dumps({'id':seq,'method':'Page.handleJavaScriptDialog','params':{'accept':True}}))
         if 'method' in raw:
             events.append(raw['method'])
         if raw.get('id')==current:
@@ -98,10 +104,10 @@ try:
     cdp('Page.enable')
     cdp('Runtime.enable')
     cdp('Fetch.enable',{'patterns':[{'urlPattern':'https://aws.sb/*','resourceType':'Document','requestStage':'Request'}]})
-    cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances'})
+    cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-scope-A-123'})
     result=poll('extension panel injection',lambda:ev("document.getElementById('wallcheck-panel')?.textContent || ''"))
     print('PANEL_PRESENT',repr(result[:150]),flush=True)
-    if '1.7.1' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
+    if '1.8.0' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
     text=poll('first 2 IP scanned',lambda:ev("document.getElementById('wallcheck-status')?.textContent?.includes('本机探针') && document.getElementById('wallcheck-count')?.textContent || ''"),seconds=18)
     print('FIRST_SCAN',repr(text),flush=True)
     def update(ip):
@@ -121,6 +127,77 @@ try:
     ev("[...document.querySelectorAll('.wc-alert-entry')].find(x=>x.querySelector('.wc-alert-title')?.textContent.includes('IP变化'))?.querySelector('.wc-ack-button')?.click()")
     poll('acknowledge clears IP change history',lambda:ev("!document.getElementById('wallcheck-alert-center')?.textContent?.includes('127.0.0.1 → 127.0.0.3')"))
     print('ACK_BUTTON_OK',flush=True)
+    print('A_SCOPE_ACK_OK',flush=True)
+    wsA=ws
+    # Open a second browser tab with a DIFFERENT sgt but identical ordinal #1.
+    second=cdp('Target.createTarget',{'url':'about:blank'})['targetId']
+    target=poll('B browser tab target',lambda:next((x for x in
+        requests.get(f'http://127.0.0.1:{port}/json',timeout=1).json()
+        if x.get('id')==second and x.get('webSocketDebuggerUrl')),None))
+    wsB=websocket.create_connection(target['webSocketDebuggerUrl'],
+        origin='http://localhost',timeout=5)
+    ws=wsB
+    cdp('Page.enable')
+    cdp('Runtime.enable')
+    cdp('Fetch.enable',{'patterns':[{'urlPattern':'https://aws.sb/*',
+      'resourceType':'Document','requestStage':'Request'}]})
+    cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-scope-B-789'})
+    poll('second scope scanning',lambda:ev(
+      "document.getElementById('wallcheck-status')?.textContent?.includes('本机探针')"))
+    assert ev("document.querySelectorAll('.wallcheck-change-badge').length")==0, \
+        'NEW_SGT_OLD_IP_FALSE_ALERT'
+    print('TWO_SGT_ISOLATION_OK',flush=True)
+    ev("document.getElementById('ip1').textContent='IP 127.0.0.5'")
+    poll('second scope B A->B',lambda:ev(
+      "document.getElementById('wallcheck-alert-center')?.textContent?.includes('127.0.0.1 → 127.0.0.5')"))
+    ws=wsA
+    # No B change event may appear in A's notification panel.
+    assert not ev("document.getElementById('wallcheck-alert-center')?.textContent?.includes('127.0.0.1 → 127.0.0.5')"), \
+      'B_SCOPE_EVENT_LEAKED_TO_A'
+    ws=wsB
+    print('CROSS_TAB_SCOPED_ALERTS_OK',flush=True)
+    # Clear B records explicitly. It re-baselines B, not A, and does not
+    # resurrect untrusted global 1.7.1 IP-change history.
+    ev("document.getElementById('wallcheck-clear').click()")
+    poll('clear B scope change history',lambda:ev(
+      "document.querySelectorAll('.wallcheck-change-badge').length===0 && "
+      "!document.getElementById('wallcheck-alert-center')?.textContent?.includes('127.0.0.1 → 127.0.0.5')"))
+    print('CLEAR_B_SCOPE_OK',flush=True)
+    ws=wsA
+    assert not ev("document.getElementById('wallcheck-alert-center')?.textContent?.includes('127.0.0.1 → 127.0.0.5')")
+    print('CLEAR_B_DID_NOT_TOUCH_A',flush=True)
+    # A third tab on sgt A may load a stale initial A address after A->B->C.
+    # It must not reverse the accepted A state back to old A.
+    third=cdp('Target.createTarget',{'url':'about:blank'})['targetId']
+    targetC=poll('C browser tab target',lambda:next((x for x in
+        requests.get(f'http://127.0.0.1:{port}/json',timeout=1).json()
+        if x.get('id')==third and x.get('webSocketDebuggerUrl')),None))
+    wsC=websocket.create_connection(targetC['webSocketDebuggerUrl'],
+        origin='http://localhost',timeout=5)
+    ws=wsC
+    cdp('Page.enable')
+    cdp('Runtime.enable')
+    cdp('Fetch.enable',{'patterns':[{'urlPattern':'https://aws.sb/*',
+      'resourceType':'Document','requestStage':'Request'}]})
+    cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-scope-A-123'})
+    poll('same-sgt stale tab scan',lambda:ev(
+      "document.getElementById('wallcheck-status')?.textContent?.includes('本机探针')"))
+    assert not ev("document.querySelector('.wallcheck-change-badge')?.textContent?.includes('127.0.0.4 → 127.0.0.1')"),'FALSE_REVERSE_AFTER_SAME_SGT_STALE_OPEN'
+    print('SAME_SGT_STALE_TAB_GUARD_OK',flush=True)
+    ws=wsA
+    ev("document.getElementById('ip1').textContent='IP 127.0.0.6'")
+    poll('A new change',lambda:ev(
+      "document.getElementById('wallcheck-alert-center')?.textContent?.includes('127.0.0.4 → 127.0.0.6')"))
+    ws=wsC
+    poll('same-sgt alert broadcast to C',lambda:ev(
+      "document.getElementById('wallcheck-alert-center')?.textContent?.includes('127.0.0.4 → 127.0.0.6')"))
+    ev("[...document.querySelectorAll('.wc-alert-entry')].find(x=>x.textContent.includes('127.0.0.4 → 127.0.0.6'))?.querySelector('.wc-ack-button')?.click()")
+    poll('C acknowledgement removed change',lambda:ev(
+      "!document.getElementById('wallcheck-alert-center')?.textContent?.includes('127.0.0.4 → 127.0.0.6')"))
+    ws=wsA
+    poll('C acknowledgement broadcast to A',lambda:ev(
+      "!document.getElementById('wallcheck-alert-center')?.textContent?.includes('127.0.0.4 → 127.0.0.6')"))
+    print('CROSS_TAB_ACK_BROADCAST_OK',flush=True)
     print('THORIUM_E2E_PASS',flush=True)
 except Exception as e:
     print('THORIUM_E2E_FAIL',repr(e),flush=True)
@@ -133,9 +210,10 @@ except Exception as e:
             except Exception as details:print('DEBUG_ERROR',repr(details),flush=True)
     sys.exit(2)
 finally:
-    try:
-        if ws: ws.close()
-    except Exception:pass
+    for conn in (ws,wsA,wsB,wsC):
+        try:
+            if conn: conn.close()
+        except Exception:pass
     if proc:
         try:proc.terminate();proc.wait(timeout=7)
         except Exception:

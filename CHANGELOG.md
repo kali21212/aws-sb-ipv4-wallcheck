@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.8.0 - per-sgt isolation 2026-10-16
+
+- Fix false IPv4 A-to-B-to-A changes caused by two independent instance-list URLs sharing #1 and #2.
+- Scope all monitoring by SHA-256 of the URL hash query sgt; do not store raw session tokens.
+- Use stable EC2 ID or IPv6 as instance identity, not position or display name. IPv6 is not probed.
+- Serialize all monitor writes and acknowledgements inside the MV3 background worker.
+- Ignore stale same-sgt tabs attempting to reverse accepted changes, preserving genuine A-to-B-to-C transitions.
+- Replace clear button with scoped "清空本页记录"; clear saved list, alerts, baseline and result cache for that scope.
+- Quarantine old unscoped v1.7 mixed IP history, preserving it only for forensic/rollback purposes.
+- Verify in isolated Thorium with two distinct sgt pages, third stale same-sgt tab, broadcast acknowledgements and scoped clear.
+
 ## 1.7.1 - local maintenance 2026-10-16
 
 - Reduce Event Log noise from the Windows watchdog: use an in-process one-minute localhost heartbeat and spawn the guarded recovery script only when agent health fails; preserve manual pause, recovery and logs.

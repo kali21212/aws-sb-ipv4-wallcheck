@@ -1,111 +1,65 @@
-const fs=require('fs'),vm=require('vm'),assert=require('assert').strict,path=require('path');
-const root=path.join(__dirname,'..','browser-extension');
-let now=1792160000000,mode='OPEN',offline=false;const db={},calls=[];
-const D=class extends Date{constructor(...a){super(...(a.length?a:[now]));}static now(){return now;}};
-const node=()=>({style:{},children:[],dataset:{},classList:{contains:()=>false},textContent:'',
-  appendChild(e){this.children.push(e);},replaceChildren(){this.children=[];},addEventListener(t,f){this[t]=f;},remove(){},closest(){return null;}});
-function boot(){
- let src=fs.readFileSync(path.join(root,'content.js'),'utf8');
- assert(src.includes('  install();'));
- src=src.replace('  install();',"  globalThis.api={runCheck,classify,findInstanceLabelNear,isPageMutationRelevant,collectInstanceRecordsOriginal:collectInstanceRecords,acknowledgeAlerts,get events(){return alertEvents;},get changes(){return recentChanges;},set(c,r){collectIPCells=()=>c;collectInstanceRecords=()=>r;}};");
- const ids=['wallcheck-panel','wallcheck-count','wallcheck-status','wallcheck-alert-center','wallcheck-recovered-history'];
- const nodes=new Map(ids.map(id=>[id,node()])),timers=[];
- const chrome={runtime:{lastError:null,sendMessage(m,cb){
-   calls.push(m);
-   if(m.type==='notify'){cb({ok:true});return;}
-   if(offline){queueMicrotask(()=>cb({ok:false,error:typeof offline==='string'?offline:'offline'}));return;}
-   queueMicrotask(()=>cb({ok:true,data:{results:Object.fromEntries(m.payload.ips.map(ip=>[ip,{
-     icmp:{state:mode==='FAIL'?'NO_REPLY':'REACHABLE'},
-     ports:[{port:22,state:mode==='OPEN'?'OPEN':'TIMEOUT'}]}]))}}));
- }},storage:{local:{get:(k,cb)=>cb(structuredClone(db)),set:(v,cb)=>{Object.assign(db,structuredClone(v));cb();}}}};
- const document={getElementById:id=>nodes.get(id),querySelectorAll:()=>[],createElement:()=>node(),body:node(),head:node()};
- const ctx={chrome,document,console,Date:D,Map,Set,Promise,queueMicrotask,
-  location:{origin:'https://aws.sb',hash:'#/ec2-instances'},
-  setTimeout:(f,ms)=>{timers.push(ms);return timers.length;},clearTimeout(){},setInterval(){},window:{addEventListener(){}},
-  MutationObserver:class{observe(){}}};
- vm.createContext(ctx);vm.runInContext(src,ctx);return {api:ctx.api,nodes,timers};
-}
-const cells=ip=>new Map([[ip,[node()]]]);
-const records=(ip,label='#1 示例组一')=>new Map([['i-0000000000000001a',{instanceId:'i-0000000000000001a',ip,label,cell:node()}]]);
-async function scan(c,ip,label){c.api.set(cells(ip),records(ip,label));await c.api.runCheck(true);}
+const assert=require('node:assert/strict');
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
+const crypto=require('node:crypto').webcrypto;
+const {TextEncoder}=require('node:util');
+const cp=require('node:child_process');
+const dir=path.resolve(__dirname,'..','browser-extension');
+const src=fs.readFileSync(path.join(dir,'content.js'),'utf8');
+const manifest=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json'),'utf8'));
+assert.equal(manifest.version,'1.8.0');
+assert.deepEqual(manifest.permissions.slice().sort(),['alarms','notifications','storage']);
+assert(src.includes("const ONLY_PORTS = [22]"));
+assert(!src.includes('aws-sb-slot-')); // never use display ordinals as identity
+assert(!src.includes('wallcheck_ip_change_toast'));
+assert(src.includes('清空本页记录'));
+const node=(text,parent=null)=>({
+ innerText:text,textContent:text,parentElement:parent,children:[],
+ closest:()=>null,querySelectorAll:()=>[],querySelector:()=>null
+});
+const card1=node('#1 ✎ 备用 6天\nIP 192.0.2.1\nIPv6 2001:db8:123::2');
+const cell1=node('IP 192.0.2.1',card1);
+const card2=node('#1 ✎ 示例组一 29天\nIP 192.0.2.2\nIPv6 2001:db8:123::3');
+const cell2=node('IP 192.0.2.2',card2);
+const document={body:node('ROOT')};
+const location={origin:'https://aws.sb',hash:'#/ec2-instances?sgt=synthetic-scope-A-123'};
+const context={
+ console,document,location,crypto,TextEncoder,URLSearchParams,
+ chrome:{storage:{local:{}},runtime:{}},
+ Map,Set,Promise,Uint8Array,queueMicrotask,Date,
+ setTimeout:()=>{},clearTimeout:()=>{}
+};
+vm.createContext(context);
+const inject='  globalThis.api={scopeFromURL,parsePorts,classify,findInstanceLabelNear,findStableIPv6Near,collectInstanceRecords,refreshChangeMarkers};';
+vm.runInContext(src.replace('  install();',inject),context);
+const api=context.api;
+const first=new Map([['192.0.2.1',[cell1]]]);
+const second=new Map([['192.0.2.2',[cell2]]]);
+const a=api.collectInstanceRecords(first);
+const b=api.collectInstanceRecords(second);
+const ai=[...a.keys()][0],bi=[...b.keys()][0];
+assert(ai.startsWith('ipv6:'));
+assert(bi.startsWith('ipv6:'));
+assert.notEqual(ai,bi,'different #1 cards must not be one instance');
+assert.equal([...a.values()][0].label,'#1 备用');
+assert.equal([...b.values()][0].label,'#1 示例组一');
+assert.equal(JSON.stringify([...api.parsePorts()]),'[22]');
+assert.equal(api.classify('192.0.2.1',{results:{'192.0.2.1':{
+ icmp:{state:'REACHABLE'},ports:[{port:22,state:'OPEN'}]}}}).key,'LOCAL_OK');
+assert.equal(api.classify('192.0.2.1',{results:{'192.0.2.1':{
+ icmp:{state:'REACHABLE'},ports:[{port:22,state:'TIMEOUT'}]}}}).key,'PORT_22_UNREACHABLE');
+assert.equal(api.classify('192.0.2.1',{results:{'192.0.2.1':{
+ icmp:{state:'NO_REPLY'},ports:[{port:22,state:'TIMEOUT'}]}}}).key,'LOCAL_FAIL');
 (async()=>{
- let c=boot();
- const raw=node(),card=node();raw.innerText='IP 192.0.2.1';raw.parentElement=card;
- card.innerText='#1 ✎ 示例组一\nIP 192.0.2.1';card.parentElement=null;
- assert.equal(c.api.findInstanceLabelNear(raw,'192.0.2.1').label,'#1 示例组一');
- card.innerText='#2 🔗 示例账号二 24小时 剩余25天\nIP 192.0.2.1';
- assert.equal(c.api.findInstanceLabelNear(raw,'192.0.2.1').label,'#2 示例账号二');
- card.innerText='#1 ✎ 示例组一 29天 剩余25天\nIP 192.0.2.1';
- assert.equal(c.api.findInstanceLabelNear(raw,'192.0.2.1').label,'#1 示例组一');
- assert(c.api.collectInstanceRecordsOriginal(cells('192.0.2.8')).has('ip-target:192.0.2.8'));
- const intern={nodeType:1,closest:()=>({})};
- assert.equal(c.api.isPageMutationRelevant({type:'childList',target:intern,addedNodes:[{nodeType:1}],removedNodes:[]}),false);
- const page={nodeType:1,closest:()=>null};
- assert.equal(c.api.isPageMutationRelevant({type:'childList',target:page,addedNodes:[{nodeType:1,matches:()=>false,closest:()=>null}],removedNodes:[]}),true);
- assert.equal(c.api.isPageMutationRelevant({type:'childList',target:page,addedNodes:[{nodeType:3,textContent:'IP 127.0.0.3'}],removedNodes:[]}),true);
- await scan(c,'192.0.2.1');
- assert(db.wallcheck_last_valid_results_v1['192.0.2.1::22']);
- assert.equal(calls.find(x=>x.type==='probe').payload.ports.join(','),'22');
- now+=60000;await scan(c,'192.0.2.2');
- now+=60000;await scan(c,'192.0.2.3','#1 新名字');
- let es=c.api.events.filter(x=>x.kind==='IP_CHANGE');
- assert.equal(es.length,2);
- assert.equal(es[0].oldIp,'192.0.2.1');assert.equal(es[0].newIp,'192.0.2.2');
- assert.equal(es[1].oldIp,'192.0.2.2');assert.equal(es[1].newIp,'192.0.2.3');
- assert.equal(es[0].label,'#1 新名字');
- assert(calls.some(x=>x.type==='notify'&&x.event.title.includes('#1')));
- now+=7200000;c=boot();await scan(c,'192.0.2.3','#1 新名字');
- assert.equal(c.api.changes.size,2);
- await c.api.acknowledgeAlerts(es.map(x=>x.id));
- assert.equal(c.api.changes.size,0);
- now+=60000;await scan(c,'192.0.2.4');
- assert.equal(c.api.events.filter(x=>x.kind==='IP_CHANGE'&&!x.acknowledged).length,1);
- mode='CLOSED';now+=60000;await scan(c,'192.0.2.4');
- assert.equal(c.api.events.filter(x=>x.kind==='PORT22_UNREACHABLE').length,1);
- now+=60000;await scan(c,'192.0.2.4');
- assert.equal(c.api.events.filter(x=>x.kind==='PORT22_UNREACHABLE').length,1);
- now+=60000;await scan(c,'192.0.2.5');
- assert.equal(c.api.events.filter(x=>x.kind==='PORT22_UNREACHABLE').length,2);
- mode='OPEN';now+=60000;await scan(c,'192.0.2.5');
- mode='FAIL';now+=60000;await scan(c,'192.0.2.5');
- assert.equal(c.api.events.filter(x=>x.kind==='HOST_UNREACHABLE').length,1);
- offline=true;now+=60000;await scan(c,'192.0.2.5');
- assert.equal(c.api.events.filter(x=>x.kind==='AGENT_OFFLINE').length,1);
- now+=60000;await scan(c,'192.0.2.5');
- assert.equal(c.api.events.filter(x=>x.kind==='AGENT_OFFLINE').length,1);
- assert(c.timers.includes(15000));
- // A browser extension reload can invalidate its old message context.
- offline='Extension context invalidated.';now+=60000;await scan(c,'192.0.2.5');
- assert.equal(c.api.events.filter(x=>x.kind==='EXTENSION_CONTEXT').length,1);
- offline=false;mode='OPEN';now+=60000;await scan(c,'192.0.2.5');
- assert.equal(db.wallcheck_condition_states_v1.__agent,'OK');
- const historicalFaults=c.api.events.filter(x=>['AGENT_OFFLINE','EXTENSION_CONTEXT'].includes(x.kind));
- assert.equal(historicalFaults.length,2);
- assert(historicalFaults.every(x=>x.resolvedAt && !x.acknowledged));
- assert(c.nodes.get('wallcheck-recovered-history').children.length>=3);
- // Existing older persisted errors must also be reconciled when a fresh probe succeeds.
- db.wallcheck_alert_events_v1.push({id:'OLD_CONTEXT',kind:'AGENT_OFFLINE',createdAt:now-40000,
-   reason:'扩展上下文已失效。',acknowledged:false});
- db.wallcheck_condition_states_v1.__agent='OK';
- c=boot();now+=60000;await scan(c,'192.0.2.5');
- assert(db.wallcheck_alert_events_v1.find(x=>x.id==='OLD_CONTEXT').resolvedAt);
- assert.equal(db.wallcheck_alert_events_v1.filter(x=>x.kind==='IP_CHANGE' && !x.acknowledged).length,2);
- assert(c.nodes.get('wallcheck-recovered-history').children.length>=4);
- const listeners={},created=[];
- const bg={runtime:{lastError:null,getURL:x=>'chrome-extension://test/'+x,
-   onInstalled:{addListener:f=>listeners.installed=f},onStartup:{addListener:f=>listeners.startup=f},
-   onMessage:{addListener:f=>listeners.message=f}},
-   alarms:{get:(n,cb)=>cb(null),clear:(n,cb)=>cb(),create:(n,o)=>created.push(o),
-     onAlarm:{addListener:f=>listeners.alarm=f}},
-   tabs:{query:(q,cb)=>cb([{id:9}]),sendMessage(){},update(){},create(){}},
-   notifications:{create:(id,opts,cb)=>{listeners.lastNote=opts;cb(id);},onClicked:{addListener(){}}}};
- vm.runInNewContext(fs.readFileSync(path.join(root,'background.js'),'utf8'),
-   {chrome:bg,AbortController,Date:D,console,setTimeout,clearTimeout,fetch:async()=>({ok:true,text:async()=>'{}'})});
- assert.equal(created[0].periodInMinutes,10);
- let notif;
- assert.equal(listeners.message({type:'notify',event:{id:'test1',title:'#2 示例账号二',message:'A to B'}},null,x=>notif=x),true);
- assert(notif.ok);assert.equal(listeners.lastNote.iconUrl,'chrome-extension://test/icon.png');
- assert(require('node:fs').existsSync(path.join(root,'icon.png')));
- assert(JSON.parse(fs.readFileSync(path.join(root,'manifest.json'),'utf8')).permissions.includes('notifications'));
- console.log('PASS v1.7: TCP22-only, A-B-C history, custom label, persistent until acknowledged, dedupe, host/22 alarms, agent alert and recovery, notification and alarm');
+ const scopedA=await api.scopeFromURL();
+ assert(/^sgt:[a-f0-9]{64}$/.test(scopedA));
+ assert(!scopedA.includes('synthetic-scope-A-123'));
+ location.hash='#/ec2-instances?sgt=synthetic-scope-B-789';
+ const scopedB=await api.scopeFromURL();
+ assert.notEqual(scopedA,scopedB);
+ // The old global results/alert keys are no longer used for active IP changes.
+ assert(!src.includes('wallcheck_alert_events_v1'));
+ assert(!src.includes('wallcheck_instance_state_v1'));
+ assert(!src.includes('wallcheck_ipv4_list_v2'));
+ cp.execFileSync(process.execPath,[path.join(__dirname,'scoped-monitor-regression.cjs')],{stdio:'inherit'});
+ console.log('PASS extension v1.8: hashed sgt scope, independent #1 cards, stable IPv6, 22-only classifications and scoped core');
 })().catch(e=>{console.error(e);process.exitCode=1;});

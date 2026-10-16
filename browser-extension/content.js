@@ -3,20 +3,27 @@
 
   const CACHE_MS = 5 * 60 * 1000;
   const AUTO_RECHECK_MINUTES = 10;
-  const ALERT_KEY = 'wallcheck_alert_events_v1';
-  const CONDITION_KEY = 'wallcheck_condition_states_v1';
+  const SCOPED_MONITOR_VERSION = 3;
+  const openedAt = Date.now();
+  let currentScope = null;
+  let scopeCurrentIPs = [];
+  let lastKnownScope = null;
+  let scopeTokenMemo = null;
+  let scopeHashMemo = null;
+  const localDomIPs = new Map();
   const ONLY_PORTS = [22];
-  const INSTANCE_STATE_KEY = 'wallcheck_instance_state_v1';
+
   const cache = new Map();
   const lastCombined = new Map();
   const recentChanges = new Map();
-  const RESULT_KEY = 'wallcheck_last_valid_results_v1';
+  const RESULT_KEY = 'wallcheck_last_valid_results_v3';
   let pendingCheck = false;
   let pendingForce = false;
   let retryTimer = null;
   let alertEvents = [];
   let conditionStates = {};
   let alertsHydrated = false;
+  let pendingMonitorSync = false;
   const AGENT_FAILURE_KINDS = new Set(['AGENT_OFFLINE','EXTENSION_CONTEXT']);
   const storageGet = keys => new Promise((resolve, reject) => {
     chrome.storage.local.get(keys, data => {
@@ -56,36 +63,63 @@
     return [...new Set(out)];
   }
 
-  const STORE_KEY = 'wallcheck_ipv4_list_v2';
+
 
   function isEC2Route() {
     return location.origin === 'https://aws.sb' &&
       location.hash.startsWith('#/ec2-instances');
   }
 
-  function mergeStoredIPs(currentIPs) {
-    return new Promise(resolve => {
-      chrome.storage.local.get([STORE_KEY], data => {
-        const stored = Array.isArray(data[STORE_KEY]) ? data[STORE_KEY] : [];
-        const all = [...new Set([...stored, ...currentIPs])].filter(isIPv4).sort();
-        chrome.storage.local.set({[STORE_KEY]: all}, () => resolve(all));
+function monitorRequest(type, fields={}) {
+    return new Promise((resolve,reject) => {
+      chrome.runtime.sendMessage({type,scope:currentScope,...fields},res=>{
+        const e=chrome.runtime.lastError;
+        if(e || !res?.ok) reject(Error(e?.message || res?.error || '监控数据操作未成功'));
+        else resolve(res.data);
       });
     });
   }
 
-  function clearStoredIPs() {
-    return new Promise(resolve => {
-      chrome.storage.local.set({
-        [STORE_KEY]: [],
-        [INSTANCE_STATE_KEY]: {}
-      }, () => {
-        recentChanges.clear();
-        resolve();
-      });
-    });
+  async function scopeFromURL(){
+    // In these aws.sb URLs the query belongs to the HASH fragment. location.search is empty.
+    if(!isEC2Route())return null;
+    const hash=location.hash;
+    const index=hash.indexOf('?');
+    if(index<0)return null;
+    const token=new URLSearchParams(hash.slice(index+1)).get('sgt');
+    if(!token || token.length<8 || token.length>1024)return null;
+    if(token===scopeTokenMemo)return scopeHashMemo;
+    const data=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token));
+    scopeTokenMemo=token; // in-memory only
+    scopeHashMemo='sgt:'+Array.from(new Uint8Array(data),b=>b.toString(16).padStart(2,'0')).join('');
+    return scopeHashMemo;
   }
 
-  function collectIPCells() {
+  function updateFromSnapshot(snapshot) {
+    if(!snapshot || snapshot.scope!==currentScope)return;
+    alertEvents=Array.isArray(snapshot.alerts)?snapshot.alerts:[];
+    conditionStates=snapshot.conditions || {};
+    scopeCurrentIPs=Array.isArray(snapshot.currentIPs)?snapshot.currentIPs:[];
+    alertsHydrated=true;
+    refreshChangeMarkers();
+    renderAlerts();
+  }
+
+  function resetLocalScope(next){
+    if(currentScope===next)return;
+    currentScope=next;
+    lastKnownScope=next;
+    alertsHydrated=false;
+    alertEvents=[];
+    conditionStates={};
+    scopeCurrentIPs=[];
+    cache.clear();
+    lastCombined.clear();
+    recentChanges.clear();
+    renderAlerts();
+  }
+
+    function collectIPCells() {
     const candidates = [...document.querySelectorAll('td,.ant-table-cell,[role="cell"],div,span')];
     const best = new Map();
 
@@ -141,14 +175,29 @@ function findInstanceLabelNear(cell, ip) {
     }
     return null;
   }
-  function collectInstanceRecords(ipCells) {
+  function findStableIPv6Near(cell,ip) {
+    let node=cell;
+    for(let depth=0;node && node!==document.body && depth<12;depth++,node=node.parentElement){
+      const text=(node.innerText || node.textContent || '').trim();
+      if(!text.includes(ip) || text.length>1800)continue;
+      const values=[...text.matchAll(/(?:IPv6\s*[:：]?\s*)([0-9a-f:]{10,50})/gi)]
+        .map(m=>m[1].toLowerCase()).filter(v=>v.includes(':'));
+      if(values.length && values.length<=3)return [...new Set(values)].sort()[0];
+    }
+    return null;
+  }
+
+    function collectInstanceRecords(ipCells) {
     const records=new Map();
     for(const [ip,cells] of ipCells) {
       const cell=cells[0];
       if(!cell) continue;
       const official=findInstanceIdNear(cell,ip);
       const display=findInstanceLabelNear(cell,ip);
-      const instanceId=official || (display ? 'aws-sb-slot-'+display.slot : 'ip-target:'+ip);
+      const ip6=findStableIPv6Near(cell,ip);
+      // Ordinals like #1 and #2 identify the display label ONLY, not a machine.
+      // With no stable EC2/IPv6 marker, key by IPv4 and suppress IP-change inference.
+      const instanceId=official ? 'ec2:'+official : (ip6 ? 'ipv6:'+ip6 : 'ip-target:'+ip);
       records.set(instanceId,{
         instanceId,ip,cell,label:display?.label || (official ? '实例 '+official : 'IPv4 '+ip)
       });
@@ -156,89 +205,48 @@ function findInstanceLabelNear(cell, ip) {
     return records;
   }
 
-    function syncInstanceState(records) {
-    return new Promise(resolve => {
-      chrome.storage.local.get([INSTANCE_STATE_KEY, STORE_KEY], data => {
-        const state = data[INSTANCE_STATE_KEY] && typeof data[INSTANCE_STATE_KEY] === 'object'
-          ? data[INSTANCE_STATE_KEY]
-          : {};
-        let storedIPs = Array.isArray(data[STORE_KEY]) ? data[STORE_KEY].filter(isIPv4) : [];
-        const now = Date.now();
-        const newChanges = [];
-        for (const [instanceId, rec] of records) {
-          const prev = state[instanceId];
-
-          if (!prev) {
-            state[instanceId] = {
-              ip: rec.ip,
-              label: rec.label,
-              firstSeenAt: now,
-              lastSeenAt: now,
-              history: []
-            };
-          } else if (prev.ip && prev.ip !== rec.ip) {
-            const history = Array.isArray(prev.history) ? prev.history.slice(-19) : [];
-            history.push({ip: prev.ip, replacedAt: now});
-            state[instanceId] = {
-              ...prev,
-              ip: rec.ip,
-              label: rec.label,
-              previousIp: prev.ip,
-              changedAt: now,
-              lastSeenAt: now,
-              history
-            };
-            storedIPs = storedIPs.filter(x => x !== prev.ip);
-            newChanges.push({
-              instanceId,
-              oldIp: prev.ip,
-              newIp: rec.ip,
-              label: rec.label,
-              changedAt: now
-            });
-          } else {
-            state[instanceId] = {...prev, label:rec.label, lastSeenAt: now};
-          }
-
-
-        }
-
-        storedIPs = [...new Set([...storedIPs, ...[...records.values()].map(x => x.ip)])].filter(isIPv4).sort();
-        chrome.storage.local.set({
-          [INSTANCE_STATE_KEY]: state,
-          [STORE_KEY]: storedIPs
-        }, () => resolve({newChanges, storedIPs}));
+function observedRecords(records) {
+    const observations=[];
+    for(const rec of records.values()){
+      const id=currentScope+'|'+rec.instanceId;
+      const before=localDomIPs.get(id);
+      observations.push({
+        instanceId:rec.instanceId,ip:rec.ip,label:rec.label,
+        pageOpenedAt:openedAt,
+        changedHere:before!==undefined && before!==rec.ip
       });
-    });
+      localDomIPs.set(id,rec.ip);
+    }
+    return observations;
   }
 
-  async function hydrateAlerts() {
+  async function syncInstanceState(records) {
+    const before=new Set(alertEvents.map(e=>e.id));
+    const snapshot=await monitorRequest('monitor:observe',{records:observedRecords(records)});
+    updateFromSnapshot(snapshot);
+    return {newChanges:alertEvents.filter(e=>e.kind==='IP_CHANGE' && !before.has(e.id))};
+  }
+
+  async function hydrateAlerts(){
     if(alertsHydrated)return;
-    const data=await storageGet([ALERT_KEY,CONDITION_KEY]);
-    alertEvents=Array.isArray(data[ALERT_KEY])?data[ALERT_KEY].filter(e=>e?.id && e?.kind):[];
-    conditionStates=data[CONDITION_KEY] && typeof data[CONDITION_KEY]==='object'?data[CONDITION_KEY]:{};
-    alertsHydrated=true;
-    refreshChangeMarkers();
-    renderAlerts();
+    updateFromSnapshot(await monitorRequest('monitor:get'));
   }
 
-  function refreshChangeMarkers() {
+    function refreshChangeMarkers() {
     recentChanges.clear();
     for(const event of alertEvents)
-      if(event.kind==='IP_CHANGE' && !event.acknowledged)
+      if(event.kind==='IP_CHANGE' && !event.acknowledged &&
+        !event.resolvedAt && (!event.scope || event.scope===currentScope))
         recentChanges.set(event.newIp,event);
   }
 
-  async function persistAlerts() {
-    const pending=alertEvents.filter(e=>!e.acknowledged && !e.resolvedAt);
-    const archived=alertEvents.filter(e=>e.acknowledged || e.resolvedAt).slice(-150);
-    alertEvents=[...archived,...pending].sort((a,b)=>a.createdAt-b.createdAt);
-    await storageSet({[ALERT_KEY]:alertEvents,[CONDITION_KEY]:conditionStates});
-    refreshChangeMarkers();
-    renderAlerts();
+// All scoped alert writes are committed by the single background coordinator.
+  // Keeping content-side persistence disabled prevents lost updates between tabs.
+  function persistAlerts(){
+    throw Error('Scoped alerts are background-owned');
   }
 
-  function dispatchNotification(event) {
+    function dispatchNotification(event) {
     const title=event.kind==='IP_CHANGE'?event.label+' · IPv4 已变化':
       event.kind==='PORT22_UNREACHABLE'?event.label+' · TCP22不可访问':
       event.kind==='HOST_UNREACHABLE'?event.label+' · 未确认主机可达':
@@ -253,107 +261,63 @@ function findInstanceLabelNear(cell, ip) {
     }catch(_){ /* page alert persists if system notification is blocked */ }
   }
 
-  async function appendAlert(event) {
-    if(alertEvents.some(x=>x.id===event.id))return;
-    alertEvents.push({...event,acknowledged:false});
-    await persistAlerts();
-    dispatchNotification(event);
+// Background monitor:observe and monitor:reachability create new events atomically.
+  // These legacy local writers are intentionally removed.
+  async function appendAlert(){
+    throw Error('Use background monitor operations');
+  }
+  async function recordChangeAlerts(){
+    // Already recorded atomically in monitor:observe.
   }
 
-  async function recordChangeAlerts(changes) {
-    for(const change of changes){
-      await appendAlert({
-        id:'IP_CHANGE:'+change.instanceId+':'+change.changedAt+':'+change.newIp,
-        kind:'IP_CHANGE',instanceId:change.instanceId,
-        label:change.label||change.instanceId,
-        oldIp:change.oldIp,newIp:change.newIp,createdAt:change.changedAt
-      });
-    }
+  async function refreshLabels(records){
+    // Instance label updates are now part of the centralized observe transaction.
   }
 
-  async function refreshLabels(records) {
-    let changed=false;
-    for(const e of alertEvents){
-      const rec=records.get(e.instanceId);
-      if(rec?.label && rec.label!==e.label){e.label=rec.label;changed=true;}
-    }
-    if(changed)await persistAlerts();
+  async function updateAgentHealth(ok,reason=''){
+    updateFromSnapshot(await monitorRequest('monitor:agent',{ok,reason}));
   }
 
-  async function updateAgentHealth(ok,reason='') {
-    const message=String(reason);
-    const failureKind=/Extension context invalidated|扩展上下文已失效/i.test(message)
-      ? 'EXTENSION_CONTEXT' : 'AGENT_OFFLINE';
-    const next=ok?'OK':failureKind;
-    if(ok){
-      // Successful *fresh* probe proves the messaging and local agent are currently usable.
-      // Keep fault records, but never leave a historical recovered error as an active alarm.
-      let changed=conditionStates.__agent!=='OK';
-      conditionStates.__agent='OK';
-      const recoveredAt=Date.now();
-      for(const event of alertEvents){
-        if(AGENT_FAILURE_KINDS.has(event.kind) && !event.resolvedAt){
-          event.resolvedAt=recoveredAt;
-          changed=true;
-        }
-      }
-      if(changed)await persistAlerts();
-      return;
-    }
-    if(conditionStates.__agent===next)return;
-    conditionStates.__agent=next;
-    await appendAlert({
-      id:failureKind+':'+Date.now(),kind:failureKind,
-      label:failureKind==='EXTENSION_CONTEXT'?'浏览器扩展':'本机检测服务',
-      createdAt:Date.now(),reason:message.slice(0,220)
-    });
-  }
-
-    async function updateReachability(records,combined){
-    let changed=false;
+  async function updateReachability(records,combined){
+    const items=[];
     for(const rec of records.values()){
-      const state=combined.get(rec.ip)?.key;
-      if(!state || state==='LOCAL_OFFLINE' || state==='UNKNOWN')continue;
-      const next=state==='LOCAL_FAIL'?'HOST_UNREACHABLE':
-        state==='PORT_22_UNREACHABLE'?'PORT22_UNREACHABLE':'OK';
-      const nextWithIP=next+'|'+rec.ip;
-      if(conditionStates[rec.instanceId]===nextWithIP)continue;
-      if(conditionStates[rec.instanceId]===next) {
-        // Migrate old v1.7 state without duplicating a one-time alert.
-        conditionStates[rec.instanceId]=nextWithIP;
-        changed=true;
-        continue;
-      }
-      conditionStates[rec.instanceId]=nextWithIP;
-      changed=true;
-      if(next!=='OK')await appendAlert({
-        id:next+':'+rec.instanceId+':'+Date.now(),
-        kind:next,instanceId:rec.instanceId,label:rec.label,
-        ip:rec.ip,createdAt:Date.now(),
-        reason:next==='PORT22_UNREACHABLE'?'本机 TCP 22 未开放':
-          '本机 Ping 与 TCP 22 均未确认可达'
-      });
+      const key=combined.get(rec.ip)?.key;
+      const status=key==='LOCAL_FAIL'?'HOST_UNREACHABLE':
+        key==='PORT_22_UNREACHABLE'?'PORT22_UNREACHABLE':
+        key==='LOCAL_OK'?'OK':null;
+      if(status)items.push({instanceId:rec.instanceId,ip:rec.ip,status});
     }
-    if(changed)await persistAlerts();
+    updateFromSnapshot(await monitorRequest('monitor:reachability',{items}));
   }
 
   async function acknowledgeAlerts(ids){
-    await hydrateAlerts();
-    const wanted=new Set(ids);
-    let changed=false;
-    for(const event of alertEvents) {
-      if(wanted.has(event.id) && !event.acknowledged){
-        event.acknowledged=true;
-        event.acknowledgedAt=Date.now();
-        changed=true;
-      }
-    }
-    if(!changed)return;
-    await persistAlerts();
+    updateFromSnapshot(await monitorRequest('monitor:ack',{ids}));
     applyBadges(collectIPCells(),lastCombined);
   }
 
-  function renderAlerts() {
+  async function clearThisScope(){
+    if(!currentScope)return;
+    const cells=collectIPCells();
+    const records=collectInstanceRecords(cells);
+    const clean=[...records.values()].map(({instanceId,ip,label})=>({instanceId,ip,label}));
+    const result=await monitorRequest('monitor:clear',{records:clean});
+    updateFromSnapshot(result);
+    // Also discard this scope's cached probe results; preserve other sgt caches.
+    const data=await storageGet([RESULT_KEY]);
+    const previous=data[RESULT_KEY] || {};
+    for(const key of Object.keys(previous)){
+      if(key.startsWith(currentScope+'|'))delete previous[key];
+    }
+    await storageSet({[RESULT_KEY]:previous});
+    cache.clear();
+    lastCombined.clear();
+    // Store the freshly cleared baseline so the next scan does not treat
+    // the same page as an IP change and does not show legacy ghost markers.
+    for(const r of clean)localDomIPs.set(currentScope+'|'+r.instanceId,r.ip);
+    return result;
+  }
+
+    function renderAlerts() {
     const panel=document.getElementById('wallcheck-alert-center');
     if(!panel || typeof panel.replaceChildren!=='function')return;
     const pending=alertEvents.filter(e=>!e.acknowledged && !e.resolvedAt);
@@ -516,26 +480,34 @@ function classify(ip,localResp) {
     try {
       ipCells = collectIPCells();
       const currentIPs = [...ipCells.keys()];
+      const scope=await scopeFromURL();
+      if(!scope){
+        document.getElementById('wallcheck-status').textContent =
+          '⚠ 本页缺少 sgt，无法安全记录 IP 变化';
+        // No IP-change inference without a stable account scope.
+        return;
+      }
+      resetLocalScope(scope);
       const instanceRecords = collectInstanceRecords(ipCells);
       await hydrateAlerts();
       const syncResult = await syncInstanceState(instanceRecords);
-      await refreshLabels(instanceRecords);
+      // Scoped coordinator updates instance display names automatically.
       if (syncResult.newChanges.length) {
         cache.clear();
         force = true;
-        await recordChangeAlerts(syncResult.newChanges);
+        // Changes already persisted in background, exactly once.
       }
       refreshChangeMarkers();
-      const ips = await mergeStoredIPs(currentIPs);
+      const ips = scopeCurrentIPs;
       document.getElementById('wallcheck-count').textContent = '当前 ' + currentIPs.length + ' / 列表 ' + ips.length + (recentChanges.size ? ' / IP变更 ' + recentChanges.size : '');
       if (!ips.length) { document.getElementById('wallcheck-status').textContent = '未发现 IPv4'; return; }
       const ports = parsePorts();
       const portKey = ports.join(',');
-      const key = ips.slice().sort().join('|') + '::' + portKey;
+      const key = currentScope + '|' + ips.slice().sort().join('|') + '::' + portKey;
       const data = await storageGet([RESULT_KEY]);
       const saved = data[RESULT_KEY] || {};
       for (const ip of ips) {
-        const entry = saved[ip + '::' + portKey];
+        const entry = saved[currentScope + '|' + ip + '::' + portKey];
         if (entry?.value && entry.checkedAt) previous.set(ip, entry.value);
       }
       applyBadges(ipCells, previous);
@@ -555,7 +527,7 @@ function classify(ip,localResp) {
         const c = classify(ip, localResp);
         combined.set(ip, c);
         lastCombined.set(ip, c);
-        saved[ip + '::' + portKey] = {value:c, checkedAt};
+        saved[currentScope + '|' + ip + '::' + portKey] = {value:c, checkedAt};
       }
       const bounded = Object.fromEntries(Object.entries(saved).sort((a,b) => b[1].checkedAt - a[1].checkedAt).slice(0,2000));
       await storageSet({[RESULT_KEY]: bounded});
@@ -579,6 +551,13 @@ function classify(ip,localResp) {
       retryTimer = setTimeout(() => runCheck(true), 15000);
     } finally {
       running = false;
+      if (pendingMonitorSync) {
+        pendingMonitorSync = false;
+        monitorRequest('monitor:get').then(snapshot=>{
+          updateFromSnapshot(snapshot);
+          applyBadges(collectIPCells(),lastCombined);
+        }).catch(()=>{});
+      }
       if (pendingCheck) {
         const nextForce = pendingForce;
         pendingCheck = pendingForce = false;
@@ -629,9 +608,9 @@ function classify(ip,localResp) {
     const panel = document.createElement('div');
     panel.id = 'wallcheck-panel';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.7.1</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.8.0</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
-      <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空列表</button></div>
+      <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空本页记录</button></div>
       <div style="color:#666;margin-top:7px">本机 ICMP + TCP 双层检测；每 ${AUTO_RECHECK_MINUTES} 分钟复检。IP变化待人工确认，不自动消失。</div>
     `;
     document.body.appendChild(panel);
@@ -644,13 +623,19 @@ function classify(ip,localResp) {
     recoveredHistory.style.display='none';
     panel.appendChild(recoveredHistory);
     panel.querySelector('#wallcheck-run').addEventListener('click',()=>runCheck(true));
-    panel.querySelector('#wallcheck-clear').addEventListener('click', async () => {
-      await clearStoredIPs();
-      cache.clear();
-      lastCombined.clear();
-      await storageSet({[RESULT_KEY]: {}});
-      document.querySelectorAll('.wallcheck-badge,.wallcheck-change-badge').forEach(x => x.remove());
-      runCheck(true);
+    panel.querySelector('#wallcheck-clear').addEventListener('click',async ()=>{
+      if(!currentScope){
+        document.getElementById('wallcheck-status').textContent='本页尚未取得 sgt 隔离标识';
+        return;
+      }
+      if(!window.confirm('清空当前 sgt 页面的已保存 IP 列表、变化历史和告警？\n将以本页当前 IP 重新建立基线，其他 sgt 页面不受影响。'))return;
+      try {
+        await clearThisScope();
+        document.querySelectorAll('.wallcheck-badge,.wallcheck-change-badge').forEach(x=>x.remove());
+        await runCheck(true);
+      } catch(e){
+        document.getElementById('wallcheck-status').textContent='清空失败：'+String(e.message||e);
+      }
     });
 
     const observer = new MutationObserver(mutations => {
@@ -660,8 +645,16 @@ function classify(ip,localResp) {
     });
     observer.observe(document.body,{childList:true,characterData:true,subtree:true});
 
-    chrome.runtime.onMessage.addListener(msg => {
-      if (msg?.type === 'auto-recheck' || msg?.type === 'startup-recheck') runCheck(true);
+    chrome.runtime.onMessage.addListener(msg=>{
+      if(msg?.type==='auto-recheck' || msg?.type==='startup-recheck'){
+        runCheck(true);
+      } else if(msg?.type==='monitor-sync' && msg.scope===currentScope){
+        if(running){pendingMonitorSync=true;return;}
+        monitorRequest('monitor:get').then(snapshot=>{
+          updateFromSnapshot(snapshot);
+          applyBadges(collectIPCells(),lastCombined);
+        }).catch(()=>{ /* next scheduled scan will reconcile */ });
+      }
     });
 
     window.addEventListener('hashchange', () => setTimeout(()=>runCheck(false), 250));

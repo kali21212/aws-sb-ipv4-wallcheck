@@ -1,0 +1,234 @@
+/* WallCheck 1.8.0: single-writer scoped monitor state.
+ * Scope IDs are SHA-256 digests of aws.sb `sgt` tokens; raw credentials
+ * never enter storage, logs, or user-visible notifications.
+ * Old 1.7.x global keys remain untouched as forensic backup, never read as active.
+ */
+'use strict';
+(() => {
+  const KEY = 'wallcheck_scoped_monitor_v3';
+  const validScope = x => typeof x === 'string' && /^sgt:[a-f0-9]{64}$/.test(x);
+  const isIP = s => typeof s === 'string' && s.split('.').length === 4 &&
+    s.split('.').every(t => /^[0-9]{1,3}$/.test(t) && Number(t) < 256 && (t === '0' || t[0] !== '0'));
+  const validId = id => typeof id === 'string' && /^((ec2:i-[a-f0-9]{8,32})|(ipv6:[a-f0-9:]{8,70})|(ip-target:(?:\d{1,3}\.){3}\d{1,3}))$/.test(id);
+  const safeLabel = x => String(x || '').replace(/[\r\n\t]/g,' ').slice(0,60);
+  const safeReason = x => String(x || '').replace(/[\r\n\t]/g,' ').slice(0,220);
+  const stableId = id => id.startsWith('ec2:') || id.startsWith('ipv6:');
+  const clone = obj => JSON.parse(JSON.stringify(obj));
+  const cleanOld = arr => {
+    const all = Array.isArray(arr) ? arr : [];
+    const older = all.filter(e => e.acknowledged || e.resolvedAt).slice(-180);
+    const pending = all.filter(e => !e.acknowledged && !e.resolvedAt);
+    return [...older,...pending].sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+  };
+  const emptyRoot = () => ({version:3,scopes:{},globalAlerts:[],agentState:'UNKNOWN',revision:0});
+  const emptyScope = () => ({instances:{},alerts:[],conditions:{},currentIPs:[],updatedAt:0});
+
+  function createWallCheckMonitor({read,write,clock=Date.now}) {
+    let chain = Promise.resolve();
+    const transact = (operation) => {
+      const task = chain.catch(() => undefined).then(async () => {
+        const stored = await read(KEY);
+        const root = stored && stored.version === 3 && stored.scopes && typeof stored.scopes === 'object'
+          ? stored : emptyRoot();
+        const result = await operation(root);
+        if (result.write) {
+          root.revision = (root.revision || 0) + 1;
+          await write(KEY,root);
+        }
+        return {...result,snapshot:result.scope ? snapshot(root,result.scope) : null,
+          revision:root.revision,write:!!result.write};
+      });
+      chain = task.then(() => undefined,() => undefined);
+      return task;
+    };
+    const snapshot = (root,scopeId) => {
+      const scope = root.scopes[scopeId] || emptyScope();
+      return {
+        scope:scopeId,
+        alerts:clone([...scope.alerts,...(root.globalAlerts || [])]),
+        instances:clone(scope.instances),
+        currentIPs:[...scope.currentIPs],
+        conditions:clone(scope.conditions),
+        revision:root.revision||0
+      };
+    };
+    async function dispatch(message) {
+      const action = String(message?.type||'');
+      if (!action.startsWith('monitor:')) throw Error('Unsupported action');
+      if (!validScope(message.scope)) throw Error('Missing or invalid isolated page scope');
+      const scopeKey = message.scope;
+      return transact(async root => {
+        const previous = root.scopes[scopeKey];
+        const scope = previous || (root.scopes[scopeKey] = emptyScope());
+        const created=[];
+        const now=clock();
+        let dirty = !previous;
+        const mark = () => {dirty=true;scope.updatedAt=now;};
+        const append = (list,event) => {
+          if (list.some(e=>e.id===event.id)) return;
+          list.push({...event,acknowledged:false});
+          created.push(event);
+          mark();
+        };
+        if (action==='monitor:get') {
+          return {write:dirty,scope:scopeKey,newAlerts:[]};
+        }
+        if (action==='monitor:observe') {
+          const raw=Array.isArray(message.records) ? message.records.slice(0,50) : [];
+          const records=[];
+          const seen = new Set();
+          for (const r of raw) {
+            if (!validId(r?.instanceId) || !isIP(r?.ip) || seen.has(r.instanceId)) continue;
+            seen.add(r.instanceId);
+            records.push({
+              instanceId:r.instanceId,ip:r.ip,label:safeLabel(r.label),
+              pageOpenedAt:Number.isFinite(r.pageOpenedAt)?r.pageOpenedAt:0,
+              changedHere:r.changedHere === true
+            });
+          }
+          const pageIPs=new Set();
+          for (const r of records) {
+            pageIPs.add(r.ip);
+            const prev=scope.instances[r.instanceId];
+            if (!prev) {
+              scope.instances[r.instanceId]={
+                ip:r.ip,label:r.label,firstSeenAt:now,lastSeenAt:now,
+                lastConfirmedAt:now,history:[],changedAt:0
+              };
+              mark();
+              continue;
+            }
+            // Do not allow a stale tab with a conflicting IP to overwrite
+            // the current instance name or create an IP-change alert.
+            if (prev.ip===r.ip) {
+              if(prev.label!==r.label){
+                prev.label=r.label;
+                for(const ev of scope.alerts){
+                  if(ev.instanceId===r.instanceId)ev.label=r.label;
+                }
+                mark();
+              }
+              if (now-prev.lastSeenAt>=1000){prev.lastSeenAt=now;mark();}
+              continue;
+            }
+            // A different stale tab is NOT evidence of a changed server IP.
+            // A newly loaded page is authoritative; an already open tab must
+            // have observed a real on-page IP mutation. Older tabs cannot
+            // reverse a previously accepted transition back to an old IP.
+            const sourceFresh = r.pageOpenedAt >= (prev.changedAt || prev.firstSeenAt);
+            const sourceUpdated = r.changedHere;
+            const oldValue = (prev.history||[]).some(h=>h.ip===r.ip);
+            const staleReverse = oldValue && (!r.changedHere || r.pageOpenedAt < prev.changedAt);
+            if (!stableId(r.instanceId) || staleReverse || (!sourceFresh && !sourceUpdated)) continue;
+            const before=prev.ip;
+            const history=Array.isArray(prev.history)?prev.history.slice(-39):[];
+            history.push({ip:before,replacedAt:now});
+            scope.instances[r.instanceId]={
+              ...prev,ip:r.ip,label:r.label,previousIp:before,
+              changedAt:now,lastConfirmedAt:now,lastSeenAt:now,history
+            };
+            if(prev.label!==r.label){
+              for(const ev of scope.alerts){
+                if(ev.instanceId===r.instanceId)ev.label=r.label;
+              }
+            }
+            // Preserve A->B, B->C as distinct immutable alerts.
+            append(scope.alerts,{
+              id:'IP_CHANGE:'+scopeKey+':'+r.instanceId+':'+now+':'+r.ip,
+              kind:'IP_CHANGE',instanceId:r.instanceId,label:r.label,
+              oldIp:before,newIp:r.ip,createdAt:now
+            });
+            // Do not keep unreachable status deduped against the old address.
+            delete scope.conditions[r.instanceId];
+            mark();
+          }
+          const ips=[...new Set(Object.values(scope.instances).map(i=>i.ip))].filter(isIP).sort();
+          if (JSON.stringify(scope.currentIPs)!==JSON.stringify(ips)) {
+            scope.currentIPs=ips;
+            mark();
+          }
+          scope.alerts=cleanOld(scope.alerts);
+        } else if (action==='monitor:ack') {
+          const ids = new Set(Array.isArray(message.ids)?message.ids.filter(x=>typeof x==='string').slice(0,500):[]);
+          for (const event of [...scope.alerts,...(root.globalAlerts||[])]) {
+            if (ids.has(event.id) && !event.acknowledged) {
+              event.acknowledged=true;
+              event.acknowledgedAt=now;
+              mark();
+            }
+          }
+          scope.alerts=cleanOld(scope.alerts);
+          root.globalAlerts=cleanOld(root.globalAlerts);
+        } else if (action==='monitor:clear') {
+          // Clear ONLY this sgt scope; atomically baseline its currently visible instances.
+          // Other sgt lists and shared agent faults are left intact.
+          const records=Array.isArray(message.records)?message.records.slice(0,50):[];
+          const fresh=emptyScope();
+          for (const r of records) {
+            if (!validId(r.instanceId) || !isIP(r.ip))continue;
+            fresh.instances[r.instanceId]={
+              ip:r.ip,label:safeLabel(r.label),firstSeenAt:now,lastSeenAt:now,
+              lastConfirmedAt:now,changedAt:0,history:[]
+            };
+          }
+          fresh.currentIPs=[...new Set(Object.values(fresh.instances).map(x=>x.ip))].sort();
+          fresh.updatedAt=now;
+          root.scopes[scopeKey]=fresh;
+          // Deleting the global per-IP probe-result cache would corrupt other
+          // scopes sharing the same IPv4; UI cache is cleared in this tab.
+          dirty=true;
+        } else if (action==='monitor:reachability') {
+          for (const item of (Array.isArray(message.items)?message.items.slice(0,50):[])) {
+            if (!validId(item.instanceId) || !isIP(item.ip)) continue;
+            const inst=scope.instances[item.instanceId];
+            // Ignore stale page results if that instance already changed IP.
+            if (!inst || inst.ip!==item.ip) continue;
+            const next=String(item.status||'');
+            if (!['OK','PORT22_UNREACHABLE','HOST_UNREACHABLE'].includes(next)) continue;
+            const old=scope.conditions[item.instanceId];
+            const fingerprint=next+'|'+item.ip;
+            if (old===fingerprint) continue;
+            scope.conditions[item.instanceId]=fingerprint;
+            for(const event of scope.alerts) {
+              if(event.instanceId===item.instanceId &&
+                 (event.kind==='HOST_UNREACHABLE'||event.kind==='PORT22_UNREACHABLE') &&
+                 !event.resolvedAt && event.ip===item.ip && event.kind!==next){
+                event.resolvedAt=now;
+              }
+            }
+            if(next!=='OK') append(scope.alerts,{
+              id:next+':'+scopeKey+':'+item.instanceId+':'+now,
+              kind:next,instanceId:item.instanceId,label:inst.label,ip:item.ip,
+              createdAt:now,
+              reason:next==='PORT22_UNREACHABLE'?'TCP 22 在本机检测中不可访问':'Ping 与 TCP 22 均未确认可达'
+            });
+            mark();
+          }
+          scope.alerts=cleanOld(scope.alerts);
+        } else if (action==='monitor:agent') {
+          const ok=message.ok===true;
+          const reason=safeReason(message.reason);
+          const kind=/Extension context invalidated|扩展上下文已失效/i.test(reason)
+            ? 'EXTENSION_CONTEXT':'AGENT_OFFLINE';
+          const next=ok?'OK':kind;
+          if (root.agentState!==next) {
+            root.agentState=next;
+            if(ok) {
+              for (const event of root.globalAlerts) {
+                if ((event.kind==='AGENT_OFFLINE'||event.kind==='EXTENSION_CONTEXT') && !event.resolvedAt)
+                  event.resolvedAt=now;
+              }
+            } else append(root.globalAlerts,{
+              id:kind+':'+now,kind,createdAt:now,label:'WallCheck',reason
+            });
+            root.globalAlerts=cleanOld(root.globalAlerts);
+            mark();
+          }
+        } else throw Error('Unsupported monitor operation');
+        return {write:dirty,scope:scopeKey,newAlerts:created};
+      });
+    }
+    return {dispatch,key:KEY};
+  }
+  globalThis.createWallCheckMonitor=createWallCheckMonitor;
+})();
