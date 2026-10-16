@@ -295,6 +295,13 @@ function observedRecords(records) {
     applyBadges(collectIPCells(),lastCombined);
   }
 
+  async function acknowledgeIPChanges(instanceId){
+    // A group may contain arbitrarily many events accumulated while away.
+    // The background transaction deletes the full pending group atomically.
+    updateFromSnapshot(await monitorRequest('monitor:ack-change-group',{instanceId}));
+    applyBadges(collectIPCells(),lastCombined);
+  }
+
   async function clearThisScope(){
     if(!currentScope)return;
     const cells=collectIPCells();
@@ -376,7 +383,9 @@ function observedRecords(records) {
       ack.type='button';
       ack.addEventListener('click',evt=>{
         evt.preventDefault();evt.stopPropagation();
-        acknowledgeAlerts(entries.map(x=>x.id)).catch(console.error);
+        (event.kind==='IP_CHANGE'
+          ? acknowledgeIPChanges(event.instanceId)
+          : acknowledgeAlerts(entries.map(x=>x.id))).catch(console.error);
       });
       block.appendChild(ack);
       panel.appendChild(block);
@@ -450,8 +459,7 @@ function classify(ip,localResp) {
           ack.addEventListener('click', e => {
             e.preventDefault();
             e.stopPropagation();
-            acknowledgeAlerts(alertEvents.filter(x => !x.acknowledged && x.kind === 'IP_CHANGE' &&
-              x.instanceId === change.instanceId).map(x => x.id)).catch(console.error);
+            acknowledgeIPChanges(change.instanceId).catch(console.error);
           });
           changeBadge.appendChild(ack);
           cell.appendChild(changeBadge);
@@ -608,10 +616,10 @@ function classify(ip,localResp) {
     const panel = document.createElement('div');
     panel.id = 'wallcheck-panel';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.8.0</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.8.1</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
       <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空本页记录</button></div>
-      <div style="color:#666;margin-top:7px">本机 ICMP + TCP 双层检测；每 ${AUTO_RECHECK_MINUTES} 分钟复检。IP变化待人工确认，不自动消失。</div>
+      <div style="color:#666;margin-top:7px">本机 ICMP + TCP 双层检测；每 ${AUTO_RECHECK_MINUTES} 分钟复检。同一实例变化持续累计；点击「已知」清除此组记录。</div>
     `;
     document.body.appendChild(panel);
     const alertCenter=document.createElement('div');

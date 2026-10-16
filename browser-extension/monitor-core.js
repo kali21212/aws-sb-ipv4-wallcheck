@@ -15,7 +15,9 @@
   const stableId = id => id.startsWith('ec2:') || id.startsWith('ipv6:');
   const clone = obj => JSON.parse(JSON.stringify(obj));
   const cleanOld = arr => {
-    const all = Array.isArray(arr) ? arr : [];
+    // Acknowledged IP-change alerts are no longer retained: the latest IP
+    // baseline and compact anti-stale history live under instances instead.
+    const all = Array.isArray(arr) ? arr.filter(e=>!(e.kind==='IP_CHANGE' && e.acknowledged)) : [];
     const older = all.filter(e => e.acknowledged || e.resolvedAt).slice(-180);
     const pending = all.filter(e => !e.acknowledged && !e.resolvedAt);
     return [...older,...pending].sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
@@ -71,6 +73,12 @@
           mark();
         };
         if (action==='monitor:get') {
+          // One-time cleanup of acknowledged IP events retained by 1.8.0.
+          // Never discard any still-pending IP-change event.
+          if(scope.alerts.some(e=>e.kind==='IP_CHANGE' && e.acknowledged)){
+            scope.alerts=cleanOld(scope.alerts);
+            mark();
+          }
           return {write:dirty,scope:scopeKey,newAlerts:[]};
         }
         if (action==='monitor:observe') {
@@ -148,8 +156,25 @@
             mark();
           }
           scope.alerts=cleanOld(scope.alerts);
+        } else if (action==='monitor:ack-change-group') {
+          const instanceId=message.instanceId;
+          if(!validId(instanceId))throw Error('Invalid stable instance ID');
+          const before=scope.alerts.length;
+          // One click clears ALL pending IP-change detail rows for this
+          // instance in the current sgt, even if the user was away for days.
+          // No 500-event slice and no cross-sgt deletion.
+          scope.alerts=scope.alerts.filter(e=>
+            !(e.kind==='IP_CHANGE' && e.instanceId===instanceId));
+          if(scope.alerts.length!==before)mark();
         } else if (action==='monitor:ack') {
-          const ids = new Set(Array.isArray(message.ids)?message.ids.filter(x=>typeof x==='string').slice(0,500):[]);
+          const ids = new Set(Array.isArray(message.ids)?
+            message.ids.filter(x=>typeof x==='string').slice(0,500):[]);
+          const previousCount=scope.alerts.length;
+          // Generic event acknowledgement also physically removes IP
+          // change detail rows rather than archiving them.
+          scope.alerts=scope.alerts.filter(e=>
+            !(e.kind==='IP_CHANGE' && ids.has(e.id)));
+          if(scope.alerts.length!==previousCount)mark();
           for (const event of [...scope.alerts,...(root.globalAlerts||[])]) {
             if (ids.has(event.id) && !event.acknowledged) {
               event.acknowledged=true;

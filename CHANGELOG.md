@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.8.1 - acknowledge and purge an entire IP-change group 2026-10-16
+
+- Keep every observed unacknowledged IPv4 transition per sgt and stable instance ID; no two-event / 500-event group limit.
+- Clicking either "已知" button atomically deletes ALL pending IP-change detail events for that instance and scope, then removes its inline and center alerts.
+- Preserve current latest-IP baseline and compact anti-stale metadata so future changes are detected without replaying old IPs.
+- Preserve unrelated pending port/host/agent faults and alerts for other signed sgt lists.
+- Automatically clean up IP-change events that were acknowledged under 1.8.0 but remained archived in browser storage.
+- Stress-test 610 pending changes, one-click group deletion, independent fault retention, subsequent fresh changes, and multitab Thorium updates.
+- Clarify that "清空本页记录" clears only the current signed list's stored monitor state, not Windows log files or other accounts.
+
 ## 1.8.0 - per-sgt isolation 2026-10-16
 
 - Fix false IPv4 A-to-B-to-A changes caused by two independent instance-list URLs sharing #1 and #2.
