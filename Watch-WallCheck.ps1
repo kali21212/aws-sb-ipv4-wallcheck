@@ -1,4 +1,4 @@
-$ErrorActionPreference='Stop'
+﻿$ErrorActionPreference='Stop'
 $base=$PSScriptRoot
 $exe=Join-Path $base 'WallCheck-Agent.exe'
 $logs=Join-Path $base 'logs'
@@ -25,6 +25,30 @@ function Write-Event([string]$kind,[string]$detail){
         [System.IO.File]::AppendAllText($logFile,$line+[char]13+[char]10,(New-Object System.Text.UTF8Encoding($false)))
     } catch {}
 }
+function Show-FaultBalloon([string]$state,[string]$detail){
+    $stampFile=Join-Path $logs 'watchdog-notification.json'
+    try {
+        if(Test-Path -LiteralPath $stampFile){
+            $last=Get-Content -LiteralPath $stampFile -Raw -Encoding UTF8 | ConvertFrom-Json
+            $seconds=([DateTimeOffset]::Now-[DateTimeOffset]::Parse($last.time)).TotalSeconds
+            if($seconds -ge 0 -and $seconds -lt 3600){return}
+        }
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+        $balloon=New-Object System.Windows.Forms.NotifyIcon
+        try {
+            $balloon.Icon=[System.Drawing.SystemIcons]::Warning
+            $balloon.Visible=$true
+            $balloon.ShowBalloonTip(8000,'WallCheck 本地检测提醒',$detail,[System.Windows.Forms.ToolTipIcon]::Warning)
+            Start-Sleep -Milliseconds 1500
+        } finally { $balloon.Dispose() }
+        $json=ConvertTo-Json @{time=(Get-Date).ToString('o');state=$state;detail=$detail} -Compress
+        [System.IO.File]::WriteAllText($stampFile,$json,(New-Object System.Text.UTF8Encoding($false)))
+        Write-Event 'NOTIFY_ATTEMPTED' $state
+    } catch {
+        Write-Event 'NOTIFY_UNAVAILABLE' $_.Exception.Message
+    }
+}
 $mutex=New-Object System.Threading.Mutex($false,'Local\Charlie_WallCheck_Watchdog_V17')
 $locked=$false
 try {
@@ -43,11 +67,13 @@ try {
     if($occupied){
         Write-State 'BLOCKED' ('port occupied; pid='+$occupied.OwningProcess)
         Write-Event 'BLOCKED' ('port occupied; pid='+$occupied.OwningProcess)
+        Show-FaultBalloon 'BLOCKED' 'WallCheck 检测端口被其他进程占用，未能启动。'
         exit 2
     }
     if(-not (Test-Path -LiteralPath $exe)){
         Write-State 'ERROR' 'agent executable missing'
         Write-Event 'ERROR' 'agent executable missing'
+        Show-FaultBalloon 'ERROR' 'WallCheck 检测程序文件缺失，请检查安装目录。'
         exit 3
     }
     Start-Process -FilePath $exe -ArgumentList '--listen','127.0.0.1:17654','--node','local' -WindowStyle Hidden | Out-Null
@@ -58,16 +84,19 @@ try {
             if($h.ok -and $h.agent -eq $expected){
                 Write-State 'RECOVERED' 'agent restarted and health checked'
                 Write-Event 'RECOVERED' 'agent restarted successfully'
+                Show-FaultBalloon 'RECOVERED' '检测服务曾停止，本机巡检已自动重新启动并验证恢复。'
                 exit 0
             }
         }catch{}
     }
     Write-State 'ERROR' 'agent failed to become healthy within 8 sec'
     Write-Event 'ERROR' 'startup timeout'
+    Show-FaultBalloon 'ERROR' 'WallCheck 检测服务启动超时，当前无法正常检测 IP。'
     exit 4
 } catch {
     Write-State 'ERROR' $_.Exception.Message
     Write-Event 'ERROR' $_.Exception.Message
+    Show-FaultBalloon 'ERROR' 'WallCheck 巡检遇到异常，请检查本地日志。'
     exit 5
 } finally {
     if($locked){$mutex.ReleaseMutex()}
