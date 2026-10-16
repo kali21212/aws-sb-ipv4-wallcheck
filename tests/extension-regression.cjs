@@ -8,12 +8,12 @@ function boot(){
  let src=fs.readFileSync(path.join(root,'content.js'),'utf8');
  assert(src.includes('  install();'));
  src=src.replace('  install();',"  globalThis.api={runCheck,classify,findInstanceLabelNear,isPageMutationRelevant,collectInstanceRecordsOriginal:collectInstanceRecords,acknowledgeAlerts,get events(){return alertEvents;},get changes(){return recentChanges;},set(c,r){collectIPCells=()=>c;collectInstanceRecords=()=>r;}};");
- const ids=['wallcheck-panel','wallcheck-count','wallcheck-status','wallcheck-alert-center'];
+ const ids=['wallcheck-panel','wallcheck-count','wallcheck-status','wallcheck-alert-center','wallcheck-recovered-history'];
  const nodes=new Map(ids.map(id=>[id,node()])),timers=[];
  const chrome={runtime:{lastError:null,sendMessage(m,cb){
    calls.push(m);
    if(m.type==='notify'){cb({ok:true});return;}
-   if(offline){queueMicrotask(()=>cb({ok:false,error:'offline'}));return;}
+   if(offline){queueMicrotask(()=>cb({ok:false,error:typeof offline==='string'?offline:'offline'}));return;}
    queueMicrotask(()=>cb({ok:true,data:{results:Object.fromEntries(m.payload.ips.map(ip=>[ip,{
      icmp:{state:mode==='FAIL'?'NO_REPLY':'REACHABLE'},
      ports:[{port:22,state:mode==='OPEN'?'OPEN':'TIMEOUT'}]}]))}}));
@@ -74,8 +74,23 @@ async function scan(c,ip,label){c.api.set(cells(ip),records(ip,label));await c.a
  now+=60000;await scan(c,'192.0.2.5');
  assert.equal(c.api.events.filter(x=>x.kind==='AGENT_OFFLINE').length,1);
  assert(c.timers.includes(15000));
+ // A browser extension reload can invalidate its old message context.
+ offline='Extension context invalidated.';now+=60000;await scan(c,'192.0.2.5');
+ assert.equal(c.api.events.filter(x=>x.kind==='EXTENSION_CONTEXT').length,1);
  offline=false;mode='OPEN';now+=60000;await scan(c,'192.0.2.5');
  assert.equal(db.wallcheck_condition_states_v1.__agent,'OK');
+ const historicalFaults=c.api.events.filter(x=>['AGENT_OFFLINE','EXTENSION_CONTEXT'].includes(x.kind));
+ assert.equal(historicalFaults.length,2);
+ assert(historicalFaults.every(x=>x.resolvedAt && !x.acknowledged));
+ assert(c.nodes.get('wallcheck-recovered-history').children.length>=3);
+ // Existing older persisted errors must also be reconciled when a fresh probe succeeds.
+ db.wallcheck_alert_events_v1.push({id:'OLD_CONTEXT',kind:'AGENT_OFFLINE',createdAt:now-40000,
+   reason:'扩展上下文已失效。',acknowledged:false});
+ db.wallcheck_condition_states_v1.__agent='OK';
+ c=boot();now+=60000;await scan(c,'192.0.2.5');
+ assert(db.wallcheck_alert_events_v1.find(x=>x.id==='OLD_CONTEXT').resolvedAt);
+ assert.equal(db.wallcheck_alert_events_v1.filter(x=>x.kind==='IP_CHANGE' && !x.acknowledged).length,2);
+ assert(c.nodes.get('wallcheck-recovered-history').children.length>=4);
  const listeners={},created=[];
  const bg={runtime:{lastError:null,getURL:x=>'chrome-extension://test/'+x,
    onInstalled:{addListener:f=>listeners.installed=f},onStartup:{addListener:f=>listeners.startup=f},

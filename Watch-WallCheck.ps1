@@ -33,15 +33,17 @@ function Show-FaultBalloon([string]$state,[string]$detail){
             $seconds=([DateTimeOffset]::Now-[DateTimeOffset]::Parse($last.time)).TotalSeconds
             if($seconds -ge 0 -and $seconds -lt 3600){return}
         }
-        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
-        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
-        $balloon=New-Object System.Windows.Forms.NotifyIcon
-        try {
-            $balloon.Icon=[System.Drawing.SystemIcons]::Warning
-            $balloon.Visible=$true
-            $balloon.ShowBalloonTip(8000,'WallCheck 本地检测提醒',$detail,[System.Windows.Forms.ToolTipIcon]::Warning)
-            Start-Sleep -Milliseconds 1500
-        } finally { $balloon.Dispose() }
+        $notifier=Join-Path $base 'notifier\WallCheck.exe'
+        if(-not (Test-Path -LiteralPath $notifier)){
+            Write-Event 'NOTIFY_UNAVAILABLE' 'dedicated WallCheck notifier executable missing'
+            return
+        }
+        $cleanDetail=$detail.Replace('"','')
+        $argsLine=$state+' "'+$cleanDetail+'"'
+        $process=Start-Process -FilePath $notifier -ArgumentList $argsLine -WindowStyle Hidden -PassThru -Wait -ErrorAction Stop
+        if($process.ExitCode -ne 0){
+            throw ('WallCheck notifier exit code '+$process.ExitCode)
+        }
         $json=ConvertTo-Json @{time=(Get-Date).ToString('o');state=$state;detail=$detail} -Compress
         [System.IO.File]::WriteAllText($stampFile,$json,(New-Object System.Text.UTF8Encoding($false)))
         Write-Event 'NOTIFY_ATTEMPTED' $state

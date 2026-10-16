@@ -17,6 +17,7 @@
   let alertEvents = [];
   let conditionStates = {};
   let alertsHydrated = false;
+  const AGENT_FAILURE_KINDS = new Set(['AGENT_OFFLINE','EXTENSION_CONTEXT']);
   const storageGet = keys => new Promise((resolve, reject) => {
     chrome.storage.local.get(keys, data => {
       const err = chrome.runtime.lastError;
@@ -229,9 +230,9 @@ function findInstanceLabelNear(cell, ip) {
   }
 
   async function persistAlerts() {
-    const pending=alertEvents.filter(e=>!e.acknowledged);
-    const acknowledged=alertEvents.filter(e=>e.acknowledged).slice(-100);
-    alertEvents=[...acknowledged,...pending].sort((a,b)=>a.createdAt-b.createdAt);
+    const pending=alertEvents.filter(e=>!e.acknowledged && !e.resolvedAt);
+    const archived=alertEvents.filter(e=>e.acknowledged || e.resolvedAt).slice(-150);
+    alertEvents=[...archived,...pending].sort((a,b)=>a.createdAt-b.createdAt);
     await storageSet({[ALERT_KEY]:alertEvents,[CONDITION_KEY]:conditionStates});
     refreshChangeMarkers();
     renderAlerts();
@@ -241,6 +242,7 @@ function findInstanceLabelNear(cell, ip) {
     const title=event.kind==='IP_CHANGE'?event.label+' · IPv4 已变化':
       event.kind==='PORT22_UNREACHABLE'?event.label+' · TCP22不可访问':
       event.kind==='HOST_UNREACHABLE'?event.label+' · 未确认主机可达':
+      event.kind==='EXTENSION_CONTEXT'?'WallCheck · 扩展重新加载':
       'WallCheck · 检测服务故障';
     const message=event.kind==='IP_CHANGE'?event.oldIp+' → '+event.newIp:
       (event.ip?event.ip+'｜':'')+(event.reason||'请检查本机检测服务');
@@ -279,19 +281,35 @@ function findInstanceLabelNear(cell, ip) {
   }
 
   async function updateAgentHealth(ok,reason='') {
-    const next=ok?'OK':'AGENT_OFFLINE';
+    const message=String(reason);
+    const failureKind=/Extension context invalidated|扩展上下文已失效/i.test(message)
+      ? 'EXTENSION_CONTEXT' : 'AGENT_OFFLINE';
+    const next=ok?'OK':failureKind;
+    if(ok){
+      // Successful *fresh* probe proves the messaging and local agent are currently usable.
+      // Keep fault records, but never leave a historical recovered error as an active alarm.
+      let changed=conditionStates.__agent!=='OK';
+      conditionStates.__agent='OK';
+      const recoveredAt=Date.now();
+      for(const event of alertEvents){
+        if(AGENT_FAILURE_KINDS.has(event.kind) && !event.resolvedAt){
+          event.resolvedAt=recoveredAt;
+          changed=true;
+        }
+      }
+      if(changed)await persistAlerts();
+      return;
+    }
     if(conditionStates.__agent===next)return;
     conditionStates.__agent=next;
-    if(!ok){
-      await appendAlert({
-        id:'AGENT_OFFLINE:'+Date.now(),kind:'AGENT_OFFLINE',
-        label:'本机检测服务',createdAt:Date.now(),
-        reason:String(reason).slice(0,220)
-      });
-    } else await persistAlerts();
+    await appendAlert({
+      id:failureKind+':'+Date.now(),kind:failureKind,
+      label:failureKind==='EXTENSION_CONTEXT'?'浏览器扩展':'本机检测服务',
+      createdAt:Date.now(),reason:message.slice(0,220)
+    });
   }
 
-  async function updateReachability(records,combined){
+    async function updateReachability(records,combined){
     let changed=false;
     for(const rec of records.values()){
       const state=combined.get(rec.ip)?.key;
@@ -338,16 +356,36 @@ function findInstanceLabelNear(cell, ip) {
   function renderAlerts() {
     const panel=document.getElementById('wallcheck-alert-center');
     if(!panel || typeof panel.replaceChildren!=='function')return;
-    const pending=alertEvents.filter(e=>!e.acknowledged);
+    const pending=alertEvents.filter(e=>!e.acknowledged && !e.resolvedAt);
     panel.replaceChildren();
     panel.style.display=pending.length?'block':'none';
-    if(!pending.length)return;
     const create=(tag,cls,txt)=>{
       const el=document.createElement(tag);
       if(cls)el.className=cls;
       if(txt!==undefined)el.textContent=txt;
       return el;
     };
+    const recoveredHistory=document.getElementById('wallcheck-recovered-history');
+    if(recoveredHistory && typeof recoveredHistory.replaceChildren==='function'){
+      const wasOpen=!!recoveredHistory.open;
+      recoveredHistory.replaceChildren();
+      const oldFaults=alertEvents.filter(e=>AGENT_FAILURE_KINDS.has(e.kind) && e.resolvedAt)
+        .slice(-20).reverse();
+      recoveredHistory.style.display=oldFaults.length?'block':'none';
+      if(oldFaults.length){
+        recoveredHistory.appendChild(create('summary','wc-history-summary',
+          '✓ 检测已恢复 · '+oldFaults.length+' 条故障历史（点击查看）'));
+        for(const e of oldFaults){
+          const source=e.kind==='EXTENSION_CONTEXT' || /Extension context invalidated|扩展上下文已失效/i.test(e.reason||'')
+            ? '扩展上下文曾失效' : '本地检测服务曾故障';
+          recoveredHistory.appendChild(create('div','wc-history-row',
+            source+'｜'+new Date(e.createdAt).toLocaleString()+
+            ' → '+new Date(e.resolvedAt).toLocaleString()+' 已恢复'));
+        }
+      }
+      recoveredHistory.open=wasOpen;
+    }
+    if(!pending.length)return;
     panel.appendChild(create('div','wc-alert-header','WallCheck 告警 · '+pending.length+' 条待确认'));
     const groups=new Map();
     for(const event of pending){
@@ -360,6 +398,7 @@ function findInstanceLabelNear(cell, ip) {
       const block=create('div','wc-alert-entry');
       const heading=event.kind==='IP_CHANGE'?'🔄 '+event.label+' · IP变化 '+entries.length+' 次':
         event.kind==='AGENT_OFFLINE'?'⛔ 本机检测服务故障':
+        event.kind==='EXTENSION_CONTEXT'?'⚠ 浏览器扩展通信失效':
         event.kind==='PORT22_UNREACHABLE'?'🔴 '+event.label+' · 22端口不可访问':
         '🔴 '+event.label+' · 主机未确认可达';
       block.appendChild(create('div','wc-alert-title',heading));
@@ -567,6 +606,9 @@ function classify(ip,localResp) {
     style.textContent = `
       #wallcheck-panel{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:300px;padding:12px;border:1px solid #ccc;border-radius:10px;background:#fff;box-shadow:0 8px 30px #0003;font:13px/1.45 Segoe UI,sans-serif;color:#222}
       #wallcheck-panel .row{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:7px}
+      #wallcheck-recovered-history{font:12px/1.4 Segoe UI,sans-serif;color:#237653;margin-top:5px}
+      #wallcheck-recovered-history summary{cursor:pointer}
+      .wc-history-row{padding:4px 2px;color:#61746b;overflow-wrap:anywhere}
       #wallcheck-panel button{padding:5px 8px;cursor:pointer}
       #wallcheck-panel input[type=text]{width:105px;padding:4px}
       .wallcheck-badge{display:inline-block;margin-left:8px;padding:1px 6px;border-radius:10px;font-size:12px;white-space:nowrap}
@@ -587,7 +629,7 @@ function classify(ip,localResp) {
     const panel = document.createElement('div');
     panel.id = 'wallcheck-panel';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.7.0</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.7.1</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
       <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空列表</button></div>
       <div style="color:#666;margin-top:7px">本机 ICMP + TCP 双层检测；每 ${AUTO_RECHECK_MINUTES} 分钟复检。IP变化待人工确认，不自动消失。</div>
@@ -597,6 +639,10 @@ function classify(ip,localResp) {
     alertCenter.id='wallcheck-alert-center';
     alertCenter.style.display='none';
     document.body.appendChild(alertCenter);
+    const recoveredHistory=document.createElement('details');
+    recoveredHistory.id='wallcheck-recovered-history';
+    recoveredHistory.style.display='none';
+    panel.appendChild(recoveredHistory);
     panel.querySelector('#wallcheck-run').addEventListener('click',()=>runCheck(true));
     panel.querySelector('#wallcheck-clear').addEventListener('click', async () => {
       await clearStoredIPs();
