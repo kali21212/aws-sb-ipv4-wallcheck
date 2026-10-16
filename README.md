@@ -5,12 +5,27 @@ A small Windows utility for monitoring IPv4 reachability on the `aws.sb` EC2 ins
 It combines a Chromium extension with a localhost probe to:
 
 - automatically detect IPv4 addresses on `aws.sb/#/ec2-instances`;
-- ignore IPv6 completely;
+- never probe IPv6 (it may identify the instance when EC2 ID is not visible);
 - test ICMP reachability plus TCP port 22 only;
 - automatically recheck every 10 minutes;
-- detect when the IPv4 of the same EC2 instance ID changes;
+- detect IPv4 changes only within the same sgt account scope and stable instance identity;
 - retain unacknowledged IPv4 change history until manually acknowledged (no flashing) and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
+
+## Multi-page and multi-tab isolation (local v1.8.0)
+
+Different aws.sb instance-list URLs containing sgt query values represent separate lists even if each contains #1 or #2. WallCheck hashes the sgt in memory using SHA-256 and stores ONLY the hash as its scope key; raw sgt tokens are not copied to notification messages or saved state. Identity uses a reliable EC2 ID, otherwise a stable visible IPv6 (never probed), otherwise the current IPv4. Ordinals and custom display names are labels only.
+
+- Per-sgt baselines, saved IP lists, recent status caches, alerts and acknowledgements stay separate.
+- All state-changing updates and acknowledgement are serialized by the extension background worker, preventing two tabs from overwriting saved records.
+- Open tabs using the same sgt receive acknowledgement broadcasts; stale tabs are not accepted as reverse-IP changes.
+- A-to-B-to-C transitions within the same instance stay pending until manually acknowledged.
+- The button named "清空本页记录" resets only the current sgt list, its history and result cache, then establishes a new baseline from the current page, leaving other sgt pages alone.
+- Old unscoped 1.7.x global history is quarantined in browser storage as a rollback backup, not used as evidence for new alerts.
+- With no stable instance identity, the IPv4 still gets reachability checks but the plugin will not invent change events from reused #1/#2 labels.
+- To prevent stale-page false alarms, a return to a historical IPv4 may require fresh on-page evidence before being reported.
+
+Regression: node tests/extension-regression.cjs; node tests/scoped-monitor-regression.cjs; on Windows with Thorium and a running local agent: python tests/thorium-smoke.py. Browser tests use disposable profiles and synthetic inputs only.
 
 ## Portable release
 

@@ -1,8 +1,8 @@
 AWS.SB IPv4 WallCheck Portable
-Browser extension: 1.7.1 (local upgrade 2026-10-16)
+Browser extension: 1.8.0 (local upgrade 2026-10-16)
 Local probe binary: 1.6.1 (unchanged, compatible)
-Target: aws.sb/#/ec2-instances
+Target: aws.sb/#/ec2-instances?sgt=... (sgt hash only stored)
 TCP ports from extension: 22 only; ICMP retained
 Automatic probe: 10 minutes; local health watchdog: 1 minute
-IP changes: permanent until acknowledgement (local browser storage)
+IP changes: isolated per sgt and stable instance ID; pending until acknowledged
 Desktop notifications require extension reload after this local update
