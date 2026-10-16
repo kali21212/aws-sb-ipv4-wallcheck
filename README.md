@@ -12,6 +12,14 @@ It combines a Chromium extension with a localhost probe to:
 - retain unacknowledged IPv4 change history until manually acknowledged (no flashing) and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
 
+## Continuous unacknowledged change history (v1.8.1)
+
+For each stable instance inside its own signed sgt scope, every IPv4 transition that the active browser actually observes is saved as a separate detail row, without a fixed two-event or 500-event limit. A grouped header counts the still-pending changes. The records remain pending across refreshes and browser restarts until the user confirms them. Clicking the group or inline "已知" button deletes ALL pending IPv4-change detail rows for THAT instance inside THAT sgt scope in one background transaction, and closes its change notification. The latest confirmed IPv4 baseline and bounded anti-stale metadata remain so monitoring continues without repeated false transitions; other groups, port errors, agent failures and different sgt scopes are unaffected.
+
+The separate "清空本页记录" action clears the WHOLE CURRENT sgt-scope list, its alert history and probe-result cache, then resets its baseline to the currently shown IPs. It does NOT delete Windows watchdog logs, real AWS instances, isolated legacy v1.7.x backup state, or other signed-account lists. This action requires confirmation.
+
+The extension cannot reconstruct unseen IP changes from times when a browser tab was suspended, closed or the computer was asleep. Unacknowledged events that WERE observed do not expire automatically, subject to Chromium extension storage availability.
+
 ## Multi-page and multi-tab isolation (local v1.8.0)
 
 Different aws.sb instance-list URLs containing sgt query values represent separate lists even if each contains #1 or #2. WallCheck hashes the sgt in memory using SHA-256 and stores ONLY the hash as its scope key; raw sgt tokens are not copied to notification messages or saved state. Identity uses a reliable EC2 ID, otherwise a stable visible IPv6 (never probed), otherwise the current IPv4. Ordinals and custom display names are labels only.

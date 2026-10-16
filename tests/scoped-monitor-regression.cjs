@@ -74,7 +74,8 @@ const ids=result=>result.snapshot.alerts.filter(e=>e.kind==='IP_CHANGE'&&!e.ackn
  const finalB=await monitor.dispatch({type:'monitor:get',scope:scopeB});
  assert.equal(ids(finalA).length,0);
  assert.equal(ids(finalB).length,0);
- assert.equal(finalA.snapshot.alerts.filter(e=>e.kind==='IP_CHANGE'&&e.acknowledged).length,2);
+ assert.equal(finalA.snapshot.alerts.filter(e=>e.kind==='IP_CHANGE').length,0, 'ack must delete persisted change detail rows');
+ assert.equal(finalA.snapshot.instances[shared].ip,'192.0.2.3', 'ack must retain latest IP baseline');
  // Acknowledge in A must not alter the current IP or state for B.
  assert.equal(finalB.snapshot.instances['ipv6:2406:da1e:dead:beef::3'].ip,'16.163.108.113');
  // Clear A atomically + re-baseline, never alters B. It also clears saved alerts.
@@ -87,6 +88,49 @@ const ids=result=>result.snapshot.alerts.filter(e=>e.kind==='IP_CHANGE'&&!e.ackn
  // Unstable identity cannot infer a change (even when display ordinal reused).
  const unstable=await observe(scopeA,rec('192.0.2.88','ip-target:192.0.2.88','#1 备用',now+100,true));
  assert.equal(ids(unstable).length,0);
+ // Simulate being away for days. Keep every unacknowledged change (not just
+ // A->B and B->C) and remove the entire instance group with one action.
+ const backlogId='ec2:i-11111111111111111';
+ now+=3000;
+ await observe(scopeA,rec('10.20.0.1',backlogId,'#3 长期监控',now+100,true));
+ for(let i=1;i<=610;i++){
+   now+=1000;
+   const ip='10.20.'+Math.floor(i/250)+'.'+(i%250+1);
+   await observe(scopeA,rec(ip,backlogId,'#3 长期监控',now+100,true));
+ }
+ const beforeGroupAck=await monitor.dispatch({type:'monitor:get',scope:scopeA});
+ const pendingForGroup=ids(beforeGroupAck).filter(e=>e.instanceId===backlogId);
+ assert.equal(pendingForGroup.length,610,'all 610 unacknowledged events must remain');
+ assert(pendingForGroup.every(e=>!e.acknowledged),'none auto-acknowledged');
+ assert.equal(pendingForGroup[0].oldIp,'10.20.0.1');
+ assert.equal(pendingForGroup[609].newIp,'10.20.2.111');
+ // Add an independent warning in the same sgt to prove per-group deletion.
+ now+=1000;
+ await monitor.dispatch({type:'monitor:reachability',scope:scopeA,
+   items:[{instanceId:backlogId,ip:'10.20.2.111',status:'PORT22_UNREACHABLE'}]});
+ const deleted=await monitor.dispatch({type:'monitor:ack-change-group',scope:scopeA,instanceId:backlogId});
+ assert.equal(ids(deleted).filter(e=>e.instanceId===backlogId).length,0);
+ assert.equal(deleted.snapshot.alerts.filter(e=>e.kind==='PORT22_UNREACHABLE' &&
+   e.instanceId===backlogId).length,1,'group change acknowledgement must not hide separate port alert');
+ assert.equal(deleted.snapshot.instances[backlogId].ip,'10.20.2.111');
+ assert.equal(deleted.snapshot.instances[backlogId].history.length,40,'bounded anti-stale metadata is preserved');
+ now+=1000;
+ const future=await observe(scopeA,rec('10.20.10.50',backlogId,'#3 长期监控',now+100,true));
+ assert.equal(ids(future).filter(e=>e.instanceId===backlogId).length,1,'monitoring continues after acknowledgement');
+ const getAfterAck=await monitor.dispatch({type:'monitor:get',scope:scopeA});
+ assert.equal(ids(getAfterAck).filter(e=>e.instanceId===backlogId).length,1);
+ // Same action cannot delete another signed account's data.
+ assert.equal((await monitor.dispatch({type:'monitor:get',scope:scopeB}))
+   .snapshot.instances['ipv6:2406:da1e:dead:beef::3'].ip,'16.163.108.113');
+ // One-time migration: already-acknowledged 1.8.0 IP details are pruned
+ // on first 1.8.1 read, while still-pending entries remain untouched.
+ db[KEY].scopes[scopeA].alerts.push({
+   id:'OLD_ACK_V180',kind:'IP_CHANGE',instanceId:backlogId,
+   createdAt:now-2000,acknowledged:true,oldIp:'a',newIp:'b'
+ });
+ const migrated=await monitor.dispatch({type:'monitor:get',scope:scopeA});
+ assert(!migrated.snapshot.alerts.some(e=>e.id==='OLD_ACK_V180'));
+ assert.equal(ids(migrated).filter(e=>e.instanceId===backlogId).length,1);
  // Two pages with agent down create ONE global alert, not N duplicate alarms.
  now+=3000;
  const faults=await Promise.all([
