@@ -132,7 +132,8 @@ function findInstanceLabelNear(cell, ip) {
       if (heads.length !== 1) continue;
       const h = heads[0];
       const lines = text.slice(h.index + h[0].length).split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
-      let name = (lines[0] || '').replace(/^[\s✎✏🖉📝•·]+/gu,'').replace(/^编辑\s*/u,'').trim();
+      let name = (lines[0] || '').replace(/^[^\p{L}\p{N}]+/u,'').replace(/^编辑\s*/u,'').trim();
+      name = name.replace(/\s+\d+\s*(?:天|小时|分钟).*$/u,'').trim();
       name = name.split(/\s{2,}|IPv[46]|地区|型号|配置时间|接近时间|剩余|状态|更换IP|IP\s/iu)[0].trim();
       if (!name) name = (lines.find(x=>x.length <= 32 && !/^(IP|IPv|型号|地区|配置|剩余|状态)/.test(x)) || '').slice(0,32);
       return {slot:h[1],label:'#'+h[1]+(name ? ' '+name.slice(0,32) : '')};
@@ -146,8 +147,8 @@ function findInstanceLabelNear(cell, ip) {
       if(!cell) continue;
       const official=findInstanceIdNear(cell,ip);
       const display=findInstanceLabelNear(cell,ip);
-      const instanceId=official || (display ? 'aws-sb-slot-'+display.slot : null);
-      if(instanceId) records.set(instanceId,{
+      const instanceId=official || (display ? 'aws-sb-slot-'+display.slot : 'ip-target:'+ip);
+      records.set(instanceId,{
         instanceId,ip,cell,label:display?.label || (official ? '实例 '+official : 'IPv4 '+ip)
       });
     }
@@ -297,8 +298,15 @@ function findInstanceLabelNear(cell, ip) {
       if(!state || state==='LOCAL_OFFLINE' || state==='UNKNOWN')continue;
       const next=state==='LOCAL_FAIL'?'HOST_UNREACHABLE':
         state==='PORT_22_UNREACHABLE'?'PORT22_UNREACHABLE':'OK';
-      if(conditionStates[rec.instanceId]===next)continue;
-      conditionStates[rec.instanceId]=next;
+      const nextWithIP=next+'|'+rec.ip;
+      if(conditionStates[rec.instanceId]===nextWithIP)continue;
+      if(conditionStates[rec.instanceId]===next) {
+        // Migrate old v1.7 state without duplicating a one-time alert.
+        conditionStates[rec.instanceId]=nextWithIP;
+        changed=true;
+        continue;
+      }
+      conditionStates[rec.instanceId]=nextWithIP;
       changed=true;
       if(next!=='OK')await appendAlert({
         id:next+':'+rec.instanceId+':'+Date.now(),
@@ -539,6 +547,20 @@ function classify(ip,localResp) {
       }
     }
   }
+  function isPageMutationRelevant(m) {
+    const excluded = '#wallcheck-panel,#wallcheck-alert-center,.wallcheck-badge,.wallcheck-change-badge';
+    const target = m.target?.nodeType === 1 ? m.target : m.target?.parentElement;
+    if (target?.closest?.(excluded)) return false;
+    if (m.type === 'characterData') return true;
+    return [...(m.addedNodes || []), ...(m.removedNodes || [])].some(n =>
+      // React/Vue often replace a Text node instead of editing characterData.
+      n.nodeType === 3 || (
+        n.nodeType === 1 &&
+        !n.matches?.(excluded) &&
+        !n.closest?.(excluded)
+      )
+    );
+  }
   function install() {
     if (document.getElementById('wallcheck-panel')) return;
     const style = document.createElement('style');
@@ -586,19 +608,7 @@ function classify(ip,localResp) {
     });
 
     const observer = new MutationObserver(mutations => {
-      if (mutatingBadges) return;
-      const relevant = mutations.some(m =>
-        (m.type === 'characterData' && !m.target.parentElement?.closest('#wallcheck-panel,#wallcheck-alert-center,.wallcheck-badge,.wallcheck-change-badge')) ||
-        [...m.addedNodes, ...m.removedNodes].some(n =>
-          n.nodeType === 1 &&
-          !n.classList?.contains('wallcheck-badge') &&
-          !n.classList?.contains('wallcheck-change-badge') &&
-          !n.classList?.contains('wallcheck-alert-ui') &&
-          n.id !== 'wallcheck-alert-center' &&
-          !n.closest?.('#wallcheck-panel,#wallcheck-alert-center')
-        )
-      );
-      if (!relevant) return;
+      if (mutatingBadges || !mutations.some(isPageMutationRelevant)) return;
       clearTimeout(scanTimer);
       scanTimer = setTimeout(()=>runCheck(false), 700);
     });
