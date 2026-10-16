@@ -36,6 +36,24 @@ chrome.alarms.onAlarm.addListener(alarm => {
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if(msg?.type==='notify'){
+    const event=msg.event||{};
+    if(!chrome.notifications?.create){
+      sendResponse({ok:false,error:'notifications unavailable'});
+      return false;
+    }
+    const id='wallcheck-'+String(event.id||Date.now()).replace(/[^a-zA-Z0-9_-]/g,'_').slice(-160);
+    chrome.notifications.create(id,{
+      type:'basic',iconUrl:chrome.runtime.getURL('icon.png'),
+      title:String(event.title||'WallCheck 提醒').slice(0,120),
+      message:String(event.message||'').slice(0,450),
+      priority:2
+    },created=>{
+      const err=chrome.runtime.lastError;
+      sendResponse(err?{ok:false,error:err.message}:{ok:true,id:created});
+    });
+    return true;
+  }
   if (!msg || msg.type !== 'probe') return;
 
   const controller = new AbortController();
@@ -54,3 +72,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     .finally(() => clearTimeout(timer));
   return true;
 });
+
+
+if(chrome.notifications?.onClicked){
+  chrome.notifications.onClicked.addListener(id=>{
+    if(!String(id).startsWith('wallcheck-'))return;
+    chrome.tabs.query({url:'https://aws.sb/*'},tabs=>{
+      if(tabs.length && tabs[0].id)chrome.tabs.update(tabs[0].id,{active:true});
+      else chrome.tabs.create({url:'https://aws.sb/#/ec2-instances',active:true});
+    });
+  });
+}

@@ -1,49 +1,84 @@
-const fs = require('node:fs');
-const vm = require('node:vm');
-const assert = require('node:assert/strict');
-const path = require('node:path').join(__dirname, '..', 'browser-extension') + '/';
-let source = fs.readFileSync(path+'content.js','utf8');
-source = source.replace('  install();', `globalThis.api = {runCheck, syncInstanceState, recentChanges, classify, install, get running(){return running;}, setCells(c){ collectIPCells = () => c; collectInstanceRecords = () => records; }, setRecords(r){records = r;}}; let records = new Map();`);
-const db = {};
-let now = 1800000000000, fail = false, calls = [];
-function context() {
-  const nodes = new Map(['wallcheck-panel','wallcheck-count','wallcheck-status','wallcheck-ports','wallcheck-mainland'].map(id => [id,{style:{},textContent:'',value:'22,80,443',checked:false}]));
-  const timers = [];
-  const chrome = {runtime:{lastError:null, sendMessage(msg,cb){calls.push(msg); queueMicrotask(()=>cb(fail ? {ok:false,error:'offline'} : {ok:true,data:{results:Object.fromEntries(msg.payload.ips.map(ip=>[ip,{icmp:{state:'REACHABLE'},ports:[{port:22,state:'OPEN'}]}]))}}));}}, storage:{local:{get(keys,cb){cb(structuredClone(db));},set(data,cb){Object.assign(db,structuredClone(data));cb();}}}};
-  const sandbox = {chrome,console,queueMicrotask, Map,Set,Promise,Date:class extends Date{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}}, location:{origin:'https://aws.sb',hash:'#/ec2-instances'},document:{getElementById:id=>nodes.get(id),querySelectorAll:()=>[],createElement:()=>({dataset:{},classList:{},remove(){}}),body:{appendChild(){}}},setTimeout:(fn,ms)=>{timers.push({fn,ms});return timers.length;},clearTimeout(){},setInterval:(fn,ms)=>{timers.push({fn,ms,interval:true});},window:{addEventListener(){}},MutationObserver:class{observe(){}}};
-  vm.createContext(sandbox);vm.runInContext(source,sandbox);
-  sandbox.api.setCells(new Map());
-  return {api:sandbox.api,nodes,timers};
+const fs=require('fs'),vm=require('vm'),assert=require('assert').strict,path=require('path');
+const root=path.join(__dirname,'..','browser-extension');
+let now=1792160000000,mode='OPEN',offline=false;const db={},calls=[];
+const D=class extends Date{constructor(...a){super(...(a.length?a:[now]));}static now(){return now;}};
+const node=()=>({style:{},children:[],dataset:{},classList:{contains:()=>false},textContent:'',
+  appendChild(e){this.children.push(e);},replaceChildren(){this.children=[];},addEventListener(t,f){this[t]=f;},remove(){},closest(){return null;}});
+function boot(){
+ let src=fs.readFileSync(path.join(root,'content.js'),'utf8');
+ assert(src.includes('  install();'));
+ src=src.replace('  install();',"  globalThis.api={runCheck,classify,findInstanceLabelNear,acknowledgeAlerts,get events(){return alertEvents;},get changes(){return recentChanges;},set(c,r){collectIPCells=()=>c;collectInstanceRecords=()=>r;}};");
+ const ids=['wallcheck-panel','wallcheck-count','wallcheck-status','wallcheck-alert-center'];
+ const nodes=new Map(ids.map(id=>[id,node()])),timers=[];
+ const chrome={runtime:{lastError:null,sendMessage(m,cb){
+   calls.push(m);
+   if(m.type==='notify'){cb({ok:true});return;}
+   if(offline){queueMicrotask(()=>cb({ok:false,error:'offline'}));return;}
+   queueMicrotask(()=>cb({ok:true,data:{results:Object.fromEntries(m.payload.ips.map(ip=>[ip,{
+     icmp:{state:mode==='FAIL'?'NO_REPLY':'REACHABLE'},
+     ports:[{port:22,state:mode==='OPEN'?'OPEN':'TIMEOUT'}]}]))}}));
+ }},storage:{local:{get:(k,cb)=>cb(structuredClone(db)),set:(v,cb)=>{Object.assign(db,structuredClone(v));cb();}}}};
+ const document={getElementById:id=>nodes.get(id),querySelectorAll:()=>[],createElement:()=>node(),body:node(),head:node()};
+ const ctx={chrome,document,console,Date:D,Map,Set,Promise,queueMicrotask,
+  location:{origin:'https://aws.sb',hash:'#/ec2-instances'},
+  setTimeout:(f,ms)=>{timers.push(ms);return timers.length;},clearTimeout(){},setInterval(){},window:{addEventListener(){}},
+  MutationObserver:class{observe(){}}};
+ vm.createContext(ctx);vm.runInContext(src,ctx);return {api:ctx.api,nodes,timers};
 }
+const cells=ip=>new Map([[ip,[node()]]]);
+const records=(ip,label='#1 待定组')=>new Map([['i-abc12345',{instanceId:'i-abc12345',ip,label,cell:node()}]]);
+async function scan(c,ip,label){c.api.set(cells(ip),records(ip,label));await c.api.runCheck(true);}
 (async()=>{
-  db.wallcheck_ipv4_list_v2=['192.0.2.1'];
-  let c=context();
-  await c.api.runCheck(true);
-  assert.match(c.nodes.get('wallcheck-status').textContent,/本机探针✓/);
-  assert.ok(db.wallcheck_last_valid_results_v1['192.0.2.1::22,80,443']);
-  const initial=JSON.stringify(db.wallcheck_last_valid_results_v1);
-  const n=calls.length;
-  await c.api.runCheck(false);assert.equal(calls.length,n);
-  await c.api.runCheck(true);assert.equal(calls.length,n+1);
-  fail=true; c=context(); await c.api.runCheck(true);
-  assert.match(c.nodes.get('wallcheck-status').textContent,/保留上次有效结果/);
-  assert.equal(JSON.stringify(db.wallcheck_last_valid_results_v1),initial);
-  assert.ok(c.timers.some(t=>t.ms===15000));
-  fail=false; c=context();await c.api.runCheck(true);assert.match(c.nodes.get('wallcheck-status').textContent,/本机探针✓/);
-  db.wallcheck_instance_state_v1={'i-12345678':{ip:'192.0.2.1',history:[]}};
-  c.api.setRecords(new Map([['i-12345678',{ip:'192.0.2.2'}]]));
-  await c.api.runCheck(false);
-  assert.ok(calls.at(-1).payload.ips.includes('192.0.2.2'));
-  assert.ok(!db.wallcheck_ipv4_list_v2.includes('192.0.2.1'));
-  assert.equal(c.api.recentChanges.size,1);
-  now+=3599999; await c.api.syncInstanceState(new Map([['i-12345678',{ip:'192.0.2.2'}]]));assert.equal(c.api.recentChanges.size,1);
-  now+=1;await c.api.syncInstanceState(new Map([['i-12345678',{ip:'192.0.2.2'}]]));assert.equal(c.api.recentChanges.size,0);
-  const listeners={},created=[];
-  const bg={AbortController,console,setTimeout,clearTimeout,fetch:async()=>({ok:true,text:async()=>'{"results":{}}'}),chrome:{runtime:{onInstalled:{addListener:f=>listeners.install=f},onStartup:{addListener:f=>listeners.startup=f},onMessage:{addListener:f=>listeners.message=f}},alarms:{get:(n,f)=>f(null),clear:(n,f)=>f(),create:(n,o)=>created.push(o),onAlarm:{addListener:f=>listeners.alarm=f}},tabs:{query:(q,f)=>f([{id:1}]),sendMessage:(id,msg,f)=>{calls.push(msg);f();}}}};
-  vm.createContext(bg);vm.runInContext(fs.readFileSync(path+'background.js','utf8'),bg);
-  assert.equal(created[0].periodInMinutes,10);
-  listeners.startup();assert.equal(calls.at(-1).type,'startup-recheck');
-  listeners.alarm({name:'wallcheck-auto-recheck'});assert.equal(calls.at(-1).type,'auto-recheck');
-  await new Promise(resolve=>{assert.equal(listeners.message({type:'probe',payload:{ips:[]}},null,res=>{assert.equal(res.ok,true);resolve();}),true);});
-  console.log('PASS: startup recheck, force bypass, persisted restoration, failure retention and retry, IP change immediate probe, one-hour expiry, alarm cadence, background message response');
+ let c=boot();
+ const raw=node(),card=node();raw.innerText='IP 192.0.2.1';raw.parentElement=card;
+ card.innerText='#1 ✎ 待定组\nIP 192.0.2.1';card.parentElement=null;
+ assert.equal(c.api.findInstanceLabelNear(raw,'192.0.2.1').label,'#1 待定组');
+ await scan(c,'192.0.2.1');
+ assert(db.wallcheck_last_valid_results_v1['192.0.2.1::22']);
+ assert.equal(calls.find(x=>x.type==='probe').payload.ports.join(','),'22');
+ now+=60000;await scan(c,'192.0.2.2');
+ now+=60000;await scan(c,'192.0.2.3','#1 新名字');
+ let es=c.api.events.filter(x=>x.kind==='IP_CHANGE');
+ assert.equal(es.length,2);
+ assert.equal(es[0].oldIp,'192.0.2.1');assert.equal(es[0].newIp,'192.0.2.2');
+ assert.equal(es[1].oldIp,'192.0.2.2');assert.equal(es[1].newIp,'192.0.2.3');
+ assert.equal(es[0].label,'#1 新名字');
+ assert(calls.some(x=>x.type==='notify'&&x.event.title.includes('#1')));
+ now+=7200000;c=boot();await scan(c,'192.0.2.3','#1 新名字');
+ assert.equal(c.api.changes.size,2);
+ await c.api.acknowledgeAlerts(es.map(x=>x.id));
+ assert.equal(c.api.changes.size,0);
+ now+=60000;await scan(c,'192.0.2.4');
+ assert.equal(c.api.events.filter(x=>x.kind==='IP_CHANGE'&&!x.acknowledged).length,1);
+ mode='CLOSED';now+=60000;await scan(c,'192.0.2.4');
+ assert.equal(c.api.events.filter(x=>x.kind==='PORT22_UNREACHABLE').length,1);
+ now+=60000;await scan(c,'192.0.2.4');
+ assert.equal(c.api.events.filter(x=>x.kind==='PORT22_UNREACHABLE').length,1);
+ mode='OPEN';now+=60000;await scan(c,'192.0.2.4');
+ mode='FAIL';now+=60000;await scan(c,'192.0.2.4');
+ assert.equal(c.api.events.filter(x=>x.kind==='HOST_UNREACHABLE').length,1);
+ offline=true;now+=60000;await scan(c,'192.0.2.4');
+ assert.equal(c.api.events.filter(x=>x.kind==='AGENT_OFFLINE').length,1);
+ now+=60000;await scan(c,'192.0.2.4');
+ assert.equal(c.api.events.filter(x=>x.kind==='AGENT_OFFLINE').length,1);
+ assert(c.timers.includes(15000));
+ offline=false;mode='OPEN';now+=60000;await scan(c,'192.0.2.4');
+ assert.equal(db.wallcheck_condition_states_v1.__agent,'OK');
+ const listeners={},created=[];
+ const bg={runtime:{lastError:null,getURL:x=>'chrome-extension://test/'+x,
+   onInstalled:{addListener:f=>listeners.installed=f},onStartup:{addListener:f=>listeners.startup=f},
+   onMessage:{addListener:f=>listeners.message=f}},
+   alarms:{get:(n,cb)=>cb(null),clear:(n,cb)=>cb(),create:(n,o)=>created.push(o),
+     onAlarm:{addListener:f=>listeners.alarm=f}},
+   tabs:{query:(q,cb)=>cb([{id:9}]),sendMessage(){},update(){},create(){}},
+   notifications:{create:(id,opts,cb)=>{listeners.lastNote=opts;cb(id);},onClicked:{addListener(){}}}};
+ vm.runInNewContext(fs.readFileSync(path.join(root,'background.js'),'utf8'),
+   {chrome:bg,AbortController,Date:D,console,setTimeout,clearTimeout,fetch:async()=>({ok:true,text:async()=>'{}'})});
+ assert.equal(created[0].periodInMinutes,10);
+ let notif;
+ assert.equal(listeners.message({type:'notify',event:{id:'test1',title:'#2 老用户',message:'A to B'}},null,x=>notif=x),true);
+ assert(notif.ok);assert.equal(listeners.lastNote.iconUrl,'chrome-extension://test/icon.png');
+ assert(require('node:fs').existsSync(path.join(root,'icon.png')));
+ assert(JSON.parse(fs.readFileSync(path.join(root,'manifest.json'),'utf8')).permissions.includes('notifications'));
+ console.log('PASS v1.7: TCP22-only, A-B-C history, custom label, persistent until acknowledged, dedupe, host/22 alarms, agent alert and recovery, notification and alarm');
 })().catch(e=>{console.error(e);process.exitCode=1;});

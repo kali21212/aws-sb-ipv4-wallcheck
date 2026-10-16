@@ -1,12 +1,8 @@
 AWS.SB IPv4 WallCheck Portable
-Version: 1.6.1
-Platform: Windows 10/11 x64
-Browser extension: Chromium-family (Thorium/Chrome/Edge/Brave)
-Probe: local-only ICMP + TCP
-Default ports: 22,80,443
-Auto recheck: 10 minutes
-Overseas baseline: removed
-IPv6: ignored
-
-Source revision: 1.6.1 recovery fixes (unreleased)
-Recovery: persisted results, immediate startup check, failure retention and retry
+Browser extension: 1.7.0 (local upgrade 2026-10-16)
+Local probe binary: 1.6.1 (unchanged, compatible)
+Target: aws.sb/#/ec2-instances
+TCP ports from extension: 22 only; ICMP retained
+Automatic probe: 10 minutes; local health watchdog: 1 minute
+IP changes: permanent until acknowledgement (local browser storage)
+Desktop notifications require extension reload after this local update
