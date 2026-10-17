@@ -20,6 +20,16 @@ The separate "清空本页记录" action clears the WHOLE CURRENT sgt-scope list
 
 The extension cannot reconstruct unseen IP changes from times when a browser tab was suspended, closed or the computer was asleep. Unacknowledged events that WERE observed do not expire automatically, subject to Chromium extension storage availability.
 
+## Acknowledge recovered health notice (v1.8.3)
+
+The green "检测已恢复" banner is a historical notice, not an active fault. It
+has no time-based auto-dismissal. Expand it to see original failure and recovery
+times, or click its adjacent "已知" button to remove all recovered agent/extension
+history that is currently shown in the extension's snapshot. Acknowledgement is
+serialized by the MV3 background coordinator and immediately synchronized across
+open sgt tabs. It never removes active failures, IPv4 change records, port/host
+warnings, or Windows watchdog logs. Future new failures still trigger alerts.
+
 ## Version 1.8.2 partial-probe isolation
 
 Only IPv4 addresses currently visible on the active sgt account page are probed.
