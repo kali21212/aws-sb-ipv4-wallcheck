@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.8.2 - per-target partial probe isolation 2026-10-17
+
+- Probe only visible IPv4 for each sgt page; ignore hidden stale baselines in a batch.
+- Retry individual missing/invalid targets with bounded concurrency (max three).
+- Preserve valid peer results and mark missing targets as UNVERIFIED, never unreachable.
+- Do not report global agent failure for AWS AuthFailure/DOM/storage errors.
+- Preserve 1.8.1 per-sgt state, A-to-B-to-C history, manual ack and Guardian.
+- Validate via scoped regression and isolated three-tab Thorium browser run.
+
 ## 1.8.1 - acknowledge and purge an entire IP-change group 2026-10-16
 
 - Keep every observed unacknowledged IPv4 transition per sgt and stable instance ID; no two-event / 500-event group limit.

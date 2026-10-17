@@ -485,6 +485,7 @@ function classify(ip,localResp) {
     running = true;
     let ipCells;
     let previous = new Map();
+    let transportUnavailable = false;
     try {
       ipCells = collectIPCells();
       const currentIPs = [...ipCells.keys()];
@@ -506,9 +507,10 @@ function classify(ip,localResp) {
         // Changes already persisted in background, exactly once.
       }
       refreshChangeMarkers();
-      const ips = scopeCurrentIPs;
+      // Only visible addresses on THIS signed sgt page are probed.
+      const ips = currentIPs;
       document.getElementById('wallcheck-count').textContent = '当前 ' + currentIPs.length + ' / 列表 ' + ips.length + (recentChanges.size ? ' / IP变更 ' + recentChanges.size : '');
-      if (!ips.length) { document.getElementById('wallcheck-status').textContent = '未发现 IPv4'; return; }
+      if (!ips.length) { document.getElementById('wallcheck-status').textContent = '本页当前无可见 IPv4｜历史基线保留'; return; }
       const ports = parsePorts();
       const portKey = ports.join(',');
       const key = currentScope + '|' + ips.slice().sort().join('|') + '::' + portKey;
@@ -526,31 +528,57 @@ function classify(ip,localResp) {
         return;
       }
       document.getElementById('wallcheck-status').textContent = previous.size ? '已恢复上次有效结果 · 正在重新验证' : '检测中 · ' + ips.length + ' 个 IPv4';
-      const localResp = await probe(ips, ports);
-      if (!localResp?.results || ips.some(ip => !localResp.results[ip])) throw new Error('本机探针返回不完整结果');
+      // Keep healthy results even if one target fails; bounded individual retries.
+      const outcome=await wallcheckProbeWithIsolation(ips,ports,probe);
+      if(outcome.transportFailure){
+        transportUnavailable=true;
+        throw new Error(outcome.batchError || '本机检测通信失败');
+      }
+      const localResp={results:outcome.results};
+      const succeededIPs=ips.filter(ip=>!!localResp.results[ip]);
+      const failedIPs=ips.filter(ip=>!localResp.results[ip]);
+      if(!succeededIPs.length)
+        throw new Error('检测接口未返回任何可验证目标结果');
       await updateAgentHealth(true);
       const combined = new Map();
       const checkedAt = Date.now();
       for (const ip of ips) {
-        const c = classify(ip, localResp);
-        combined.set(ip, c);
-        lastCombined.set(ip, c);
-        saved[currentScope + '|' + ip + '::' + portKey] = {value:c, checkedAt};
+        if(!localResp.results[ip]){
+          const old=previous.get(ip);
+          const info=old?.text ? '｜上次：'+old.text.slice(0,85) : '';
+          const c={key:'PROBE_UNVERIFIED',text:'⚠ 本次未验证'+info};
+          combined.set(ip,c);
+          lastCombined.set(ip,c);
+          continue; // Not a verified unreachable host; do not cache this.
+        }
+        const c=classify(ip,localResp);
+        combined.set(ip,c);
+        lastCombined.set(ip,c);
+        saved[currentScope + '|' + ip + '::' + portKey]={value:c,checkedAt};
       }
       const bounded = Object.fromEntries(Object.entries(saved).sort((a,b) => b[1].checkedAt - a[1].checkedAt).slice(0,2000));
       await storageSet({[RESULT_KEY]: bounded});
       clearTimeout(retryTimer);
       lastFinishedAt = new Date(checkedAt);
-      cache.set(key, {time:checkedAt, value:combined});
+      if(failedIPs.length)cache.delete(key);
+      else cache.set(key,{time:checkedAt,value:combined});
       applyBadges(ipCells, combined);
       await updateReachability(instanceRecords, combined);
-      document.getElementById('wallcheck-status').textContent = '本机探针✓ · ' + ips.length + ' 个 IPv4 · ' + lastFinishedAt.toLocaleTimeString();
+      const historicalSkipped=Math.max(0,scopeCurrentIPs.length-ips.length);
+      const skippedText=historicalSkipped ? '｜'+historicalSkipped+' 个历史目标本页未显示' : '';
+      const status=document.getElementById('wallcheck-status');
+      status.textContent=failedIPs.length ?
+        '⚠ 已验证 '+succeededIPs.length+'/'+ips.length+' 个可见 IPv4｜其余未验证｜15秒后补测'+skippedText :
+        '本机探针✓ · '+ips.length+' 个可见 IPv4 · '+lastFinishedAt.toLocaleTimeString()+skippedText;
+      if(failedIPs.length)retryTimer=setTimeout(()=>runCheck(true),15000);
       document.getElementById('wallcheck-status').title = '';
     } catch (err) {
       cache.clear();
       if (ipCells) applyBadges(ipCells, previous);
-      if (alertsHydrated) {
-        try { await updateAgentHealth(false,err.message||String(err)); }catch(_){}
+      // A bad AWS account, DOM parse, or storage error is NOT proof that
+      // localhost agent is offline. Only confirmed probe transport failure is.
+      if(alertsHydrated && transportUnavailable){
+        try{await updateAgentHealth(false,err.message||String(err));}catch(_){}
       }
       const status = document.getElementById('wallcheck-status');
       status.textContent = '⚠ 本次检测失败｜' + (previous.size ? '保留上次有效结果' : '本机探针不可用') + '｜15秒后重试';
@@ -616,7 +644,7 @@ function classify(ip,localResp) {
     const panel = document.createElement('div');
     panel.id = 'wallcheck-panel';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.8.1</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.8.2</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
       <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空本页记录</button></div>
       <div style="color:#666;margin-top:7px">本机 ICMP + TCP 双层检测；每 ${AUTO_RECHECK_MINUTES} 分钟复检。同一实例变化持续累计；点击「已知」清除此组记录。</div>

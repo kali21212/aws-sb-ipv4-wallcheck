@@ -1,5 +1,5 @@
 AWS.SB IPv4 WallCheck Portable
-Browser extension: 1.8.1 (local upgrade 2026-10-16)
+Browser extension: 1.8.2 (local upgrade 2026-10-16)
 Local probe binary: 1.6.1 (unchanged, compatible)
 Target: aws.sb/#/ec2-instances?sgt=... (sgt hash only stored)
 TCP ports from extension: 22 only; ICMP retained
