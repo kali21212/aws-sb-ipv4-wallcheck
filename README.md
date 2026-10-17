@@ -20,6 +20,17 @@ The separate "清空本页记录" action clears the WHOLE CURRENT sgt-scope list
 
 The extension cannot reconstruct unseen IP changes from times when a browser tab was suspended, closed or the computer was asleep. Unacknowledged events that WERE observed do not expire automatically, subject to Chromium extension storage availability.
 
+## Version 1.8.2 partial-probe isolation
+
+Only IPv4 addresses currently visible on the active sgt account page are probed.
+Historic baselines remain intact, but invisible targets are excluded from each
+batch. A missing or invalid IP result triggers a bounded individual retry
+(three concurrent fallbacks maximum); successful peers remain visible. Missing
+results are labeled UNVERIFIED, never falsely labeled unreachable or cached
+as a verified success. Only confirmed localhost transport loss creates a
+global agent-offline alert. Bad AWS credentials are handled by AWS.SB, not by
+WallCheck. The probe still uses ICMP + TCP 22 only.
+
 ## Multi-page and multi-tab isolation (local v1.8.0)
 
 Different aws.sb instance-list URLs containing sgt query values represent separate lists even if each contains #1 or #2. WallCheck hashes the sgt in memory using SHA-256 and stores ONLY the hash as its scope key; raw sgt tokens are not copied to notification messages or saved state. Identity uses a reliable EC2 ID, otherwise a stable visible IPv6 (never probed), otherwise the current IPv4. Ordinals and custom display names are labels only.
