@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.8.3 - manually acknowledge recovered health notice 2026-10-17
+
+- Keep the restored-health green notification visible until manually confirmed.
+- Add compact "已知" button next to history toggle; preserve expandable timestamps.
+- Atomically purge only already-resolved agent/extension faults by event ID.
+- Never purge live failures, IP-change chains, port alerts or disk health logs.
+- Synchronize acknowledgement between signed sgt pages and future fault cycles.
+- Regress with isolated browser and direct single-writer monitor tests.
+
 ## 1.8.2 - per-target partial probe isolation 2026-10-17
 
 - Probe only visible IPv4 for each sgt page; ignore hidden stale baselines in a batch.

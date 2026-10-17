@@ -302,6 +302,12 @@ function observedRecords(records) {
     applyBadges(collectIPCells(),lastCombined);
   }
 
+  async function acknowledgeRecoveredFaults(ids){
+    // Global agent/extension recovery history is shared across all sgt tabs.
+    // Only exact recovered event IDs are purged; live alarms cannot be removed.
+    updateFromSnapshot(await monitorRequest('monitor:ack-recovered',{ids}));
+  }
+
   async function clearThisScope(){
     if(!currentScope)return;
     const cells=collectIPCells();
@@ -340,12 +346,23 @@ function observedRecords(records) {
     if(recoveredHistory && typeof recoveredHistory.replaceChildren==='function'){
       const wasOpen=!!recoveredHistory.open;
       recoveredHistory.replaceChildren();
-      const oldFaults=alertEvents.filter(e=>AGENT_FAILURE_KINDS.has(e.kind) && e.resolvedAt)
-        .slice(-20).reverse();
+      const recoveredFaults=alertEvents.filter(e=>AGENT_FAILURE_KINDS.has(e.kind) && e.resolvedAt);
+      const oldFaults=recoveredFaults.slice(-20).reverse();
       recoveredHistory.style.display=oldFaults.length?'block':'none';
       if(oldFaults.length){
         recoveredHistory.appendChild(create('summary','wc-history-summary',
-          '✓ 检测已恢复 · '+oldFaults.length+' 条故障历史（点击查看）'));
+          '✓ 检测已恢复 · '+recoveredFaults.length+' 条历史（查看）'));
+        const ack=create('button','wc-history-ack','已知');
+        ack.type='button';
+        ack.title='确认全部已恢复故障，不影响正在发生的故障';
+        ack.addEventListener('click',event=>{
+          event.preventDefault();event.stopPropagation();
+          ack.disabled=true;
+          acknowledgeRecoveredFaults(recoveredFaults.map(e=>e.id)).catch(err=>{
+            ack.disabled=false;console.error('Recovered history acknowledge failed',err);
+          });
+        });
+        recoveredHistory.appendChild(ack);
         for(const e of oldFaults){
           const source=e.kind==='EXTENSION_CONTEXT' || /Extension context invalidated|扩展上下文已失效/i.test(e.reason||'')
             ? '扩展上下文曾失效' : '本地检测服务曾故障';
@@ -621,8 +638,10 @@ function classify(ip,localResp) {
     style.textContent = `
       #wallcheck-panel{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:300px;padding:12px;border:1px solid #ccc;border-radius:10px;background:#fff;box-shadow:0 8px 30px #0003;font:13px/1.45 Segoe UI,sans-serif;color:#222}
       #wallcheck-panel .row{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:7px}
-      #wallcheck-recovered-history{font:12px/1.4 Segoe UI,sans-serif;color:#237653;margin-top:5px}
-      #wallcheck-recovered-history summary{cursor:pointer}
+      #wallcheck-recovered-history{position:relative;font:12px/1.4 Segoe UI,sans-serif;color:#237653;margin-top:5px;padding-right:51px;min-height:23px}
+      #wallcheck-recovered-history summary{cursor:pointer;padding-top:2px}
+      #wallcheck-recovered-history .wc-history-ack{position:absolute;right:0;top:0;padding:1px 7px;border:1px solid #9ad4b1;background:#f0fff4;border-radius:5px;color:#196c3b;font-size:12px;cursor:pointer}
+      #wallcheck-recovered-history .wc-history-ack:disabled{opacity:.6;cursor:wait}
       .wc-history-row{padding:4px 2px;color:#61746b;overflow-wrap:anywhere}
       #wallcheck-panel button{padding:5px 8px;cursor:pointer}
       #wallcheck-panel input[type=text]{width:105px;padding:4px}
@@ -644,7 +663,7 @@ function classify(ip,localResp) {
     const panel = document.createElement('div');
     panel.id = 'wallcheck-panel';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.8.2</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.8.3</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
       <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空本页记录</button></div>
       <div style="color:#666;margin-top:7px">本机 ICMP + TCP 双层检测；每 ${AUTO_RECHECK_MINUTES} 分钟复检。同一实例变化持续累计；点击「已知」清除此组记录。</div>

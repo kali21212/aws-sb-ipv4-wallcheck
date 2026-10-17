@@ -156,6 +156,15 @@
             mark();
           }
           scope.alerts=cleanOld(scope.alerts);
+        } else if (action==='monitor:ack-recovered') {
+          const ids = new Set(Array.isArray(message.ids) ?
+            message.ids.filter(x=>typeof x==='string').slice(0,1000) : []);
+          const before=root.globalAlerts.length;
+          // Only already-resolved agent/extension events, never active failures.
+          root.globalAlerts=root.globalAlerts.filter(e=>!(
+            ids.has(e.id) && e.resolvedAt &&
+            (e.kind==='AGENT_OFFLINE' || e.kind==='EXTENSION_CONTEXT')));
+          if(root.globalAlerts.length!==before)mark();
         } else if (action==='monitor:ack-change-group') {
           const instanceId=message.instanceId;
           if(!validId(instanceId))throw Error('Invalid stable instance ID');
