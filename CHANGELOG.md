@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.9.1 - first-seen account-list notification 2026-10-17
+
+- Show one persisted new-monitor-list notice when a new signed sgt scope
+  first contains at least one valid IPv4, with optional desktop toast and
+  in-page "已知" acknowledgement.
+- Do not conflate account switches with same-instance A to B IP changes,
+  and do not notify retrospectively for existing scope baselines.
+- Empty/login-failed pages, return visits and clear-page actions do not
+  regenerate onboarding warnings.
+- Preserve AWS.SB 10-minute dual ICMP/TCP22 probes, manual 1/5/10-minute
+  polling, existing reachability alerts, guardian and saved history.
+- Add isolated scoped regression and real-browser acknowledge test.
+
 ## 1.9.0 - independent manual IPv4 monitoring 2026-10-17
 
 - Add manual IPv4 manager via popup, options page and original AWS.SB panel.

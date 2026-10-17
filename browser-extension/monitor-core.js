@@ -23,7 +23,7 @@
     return [...older,...pending].sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
   };
   const emptyRoot = () => ({version:3,scopes:{},globalAlerts:[],agentState:'UNKNOWN',revision:0});
-  const emptyScope = () => ({instances:{},alerts:[],conditions:{},currentIPs:[],updatedAt:0});
+  const emptyScope = () => ({instances:{},alerts:[],conditions:{},currentIPs:[],updatedAt:0,onboardingNotifiedAt:0});
 
   function createWallCheckMonitor({read,write,clock=Date.now}) {
     let chain = Promise.resolve();
@@ -94,6 +94,11 @@
               changedHere:r.changedHere === true
             });
           }
+          // A new signed sgt list is NOT evidence that #1 in a different
+          // account changed IP. Announce its first real visible IPv4 separately.
+          // Existing 1.9.0 scopes with stored instances are left untouched.
+          const firstListSeen=records.length>0 &&
+            !scope.onboardingNotifiedAt && Object.keys(scope.instances).length===0;
           const pageIPs=new Set();
           for (const r of records) {
             pageIPs.add(r.ip);
@@ -149,6 +154,16 @@
             // Do not keep unreachable status deduped against the old address.
             delete scope.conditions[r.instanceId];
             mark();
+          }
+          if(firstListSeen){
+            scope.onboardingNotifiedAt=now;
+            append(scope.alerts,{
+              id:'SCOPE_ONBOARDED:'+scopeKey+':'+now,
+              kind:'SCOPE_ONBOARDED',createdAt:now,
+              label:records[0].label,ip:records[0].ip,
+              observedCount:records.length,
+              reason:'首次发现 '+records.length+' 个 IPv4，已建立独立监控基线。并非旧账号的 IP 变化'
+            });
           }
           const ips=[...new Set(Object.values(scope.instances).map(i=>i.ip))].filter(isIP).sort();
           if (JSON.stringify(scope.currentIPs)!==JSON.stringify(ips)) {
@@ -207,6 +222,8 @@
           }
           fresh.currentIPs=[...new Set(Object.values(fresh.instances).map(x=>x.ip))].sort();
           fresh.updatedAt=now;
+          // Explicit clear should never silently re-trigger a new-list notice.
+          fresh.onboardingNotifiedAt=now;
           root.scopes[scopeKey]=fresh;
           // Deleting the global per-IP probe-result cache would corrupt other
           // scopes sharing the same IPv4; UI cache is cleared in this tab.

@@ -107,9 +107,17 @@ try:
     cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-scope-A-123'})
     result=poll('extension panel injection',lambda:ev("document.getElementById('wallcheck-panel')?.textContent || ''"))
     print('PANEL_PRESENT',repr(result[:150]),flush=True)
-    if '1.9.0' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
+    if '1.9.1' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
     text=poll('first 2 IP scanned',lambda:ev("document.getElementById('wallcheck-status')?.textContent?.includes('本机探针') && document.getElementById('wallcheck-count')?.textContent || ''"),seconds=18)
     print('FIRST_SCAN',repr(text),flush=True)
+    poll('new scoped monitor notice',lambda:ev(
+      "document.getElementById('wallcheck-alert-center')?.textContent?.includes('新监控列表已接入')"))
+    ev("""[...document.querySelectorAll('.wc-alert-entry')]
+       .find(x=>x.textContent.includes('新监控列表已接入'))
+       ?.querySelector('.wc-ack-button')?.click()""")
+    poll('new list acknowledged and removed',lambda:ev(
+      "![...document.querySelectorAll('.wc-alert-entry')].some(x=>x.textContent.includes('新监控列表已接入'))"))
+    print('SCOPE_FIRST_SEEN_ACK_OK',flush=True)
     def update(ip):
         ev("document.getElementById('ip1').textContent='IP "+ip+"'")
     update('127.0.0.3')
