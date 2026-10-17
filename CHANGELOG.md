@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.9.0 - independent manual IPv4 monitoring 2026-10-17
+
+- Add manual IPv4 manager via popup, options page and original AWS.SB panel.
+- Check each saved target by Ping, TCP22, or both every 1/5/10 minutes with
+  MV3 background alarms while Chromium remains running.
+- Retain and acknowledge each target's address changes, downtime and recovery.
+- Non-blocking IP replacement and generation-guarded late result rejection.
+- Keep signed AWS.SB scopes, detection agent 1.6.1, Guardian and 1.8.3
+  recovery notification behavior unchanged.
+- Add isolated multi-IP core regression plus real browser background tests.
+
 ## 1.8.3 - manually acknowledge recovered health notice 2026-10-17
 
 - Keep the restored-health green notification visible until manually confirmed.

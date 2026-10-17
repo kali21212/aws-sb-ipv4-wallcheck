@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WallCheck · 手动 IPv4 监控</title>
+  <style>
+    :root{font:14px/1.5 "Segoe UI","Microsoft YaHei",sans-serif;color:#243040;background:#f3f6f9}
+    *{box-sizing:border-box} body{margin:0;padding:16px;min-width:370px}
+    main{max-width:760px;margin:0 auto} header{display:flex;justify-content:space-between;gap:12px;align-items:center}
+    h1{font-size:18px;margin:0} h2{font-size:15px;margin:0 0 10px}
+    .muted{font-size:12px;color:#64748b}.help{font-size:12px;color:#566879;margin-top:8px}
+    .panel{background:#fff;border:1px solid #d9e2ec;border-radius:12px;padding:13px;margin-top:12px;box-shadow:0 2px 8px #0f172a0a}
+    #summary{margin:8px 0;color:#425466;font-size:12px}
+    #notice{min-height:18px;color:#b45309;margin:6px 0;font-size:12px}
+    form{display:grid;grid-template-columns:1.5fr 1fr;gap:9px}
+    label{font-size:12px;color:#48566a;display:flex;flex-direction:column;gap:3px}
+    input,select{padding:7px 8px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;min-width:0;font-size:13px;color:#1e293b}
+    input:focus,select:focus{outline:2px solid #9ac7e7;border-color:#5ba4d2}
+    button{border:1px solid #b5c5d5;border-radius:7px;background:#fff;padding:6px 10px;cursor:pointer;font:inherit}
+    button:hover{background:#eff6ff}button:disabled{opacity:.55;cursor:wait}
+    .primary{background:#1176a9;color:white;border-color:#1176a9}.primary:hover{background:#0a6593}
+    .actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+    .row{display:flex;justify-content:space-between;gap:10px;align-items:center}
+    .target{border:1px solid #d9e2ec;border-radius:10px;background:white;padding:12px;margin:9px 0}
+    .name{font-weight:700;word-break:break-word}.ip{font-family:Consolas,monospace;color:#23445e}
+    .status{border-radius:12px;font-weight:700;font-size:12px;padding:2px 8px;white-space:nowrap}
+    .up{color:#176437;background:#e8f6ed}.down{color:#a81d25;background:#feecee}
+    .unknown{color:#6b7280;background:#f1f5f9}.error{color:#955b02;background:#fff2d7}
+    .detail{color:#425466;margin:7px 0;font-size:12px;line-height:1.55}
+    details{margin-top:10px;border-top:1px solid #e2e8f0;padding-top:8px}
+    summary{cursor:pointer;color:#a05813;font-size:13px}
+    .history{max-height:180px;overflow:auto;margin:6px 0 0 0;padding:0;list-style:none}
+    .history li{padding:5px 0;border-bottom:1px solid #edf2f7;font-size:12px;overflow-wrap:anywhere}
+    .warn{font-size:12px;color:#944e05;margin-top:8px}
+    .empty{text-align:center;color:#6b7280;padding:26px 5px}
+    .visually-hidden{position:absolute;width:1px;height:1px;clip:rect(0,0,0,0);overflow:hidden}
+    @media(min-width:500px){form{grid-template-columns:1.3fr 1fr 1fr 1fr}body{padding:18px}}
+  </style>
+</head>
+<body>
+<main>
+  <header><div><h1>WallCheck · 手动 IPv4 监控</h1><div class="muted">独立于 AWS.SB，长期保存监控目标和未确认事件</div></div><span class="status up">1.9.0</span></header>
+  <section class="panel" aria-labelledby="add-title">
+    <h2 id="add-title">添加监控 IP</h2>
+    <form id="target-form">
+      <label>IPv4 地址<input id="ip" type="text" inputmode="decimal" autocomplete="off" placeholder="例如 203.0.113.101" required maxlength="15"></label>
+      <label>备注名称<input id="label" type="text" maxlength="60" autocomplete="off" placeholder="备用线路"></label>
+      <label>监控方式<select id="mode"><option value="either">Ping 或 TCP22</option><option value="ping">仅按 Ping 判断</option><option value="tcp22">仅按 TCP22 判断</option></select></label>
+      <label>检查间隔<select id="interval"><option value="1">每 1 分钟</option><option value="5">每 5 分钟</option><option value="10">每 10 分钟</option></select></label>
+      <div class="actions" style="grid-column:1 / -1"><button type="submit" class="primary" id="submit">添加并立即检测</button><button type="button" id="cancel-edit" hidden>取消编辑</button><button type="button" id="check-all">立即检查全部</button></div>
+    </form>
+    <div class="help">现有本地代理仍同时采集 ICMP 与 TCP 22，所选方式决定状态判定；不支持任意 TCP 端口。IP 更新后会停止旧目标记录，立即监控新 IP。</div>
+  </section>
+  <div id="notice" role="status" aria-live="polite"></div>
+  <div id="summary">正在读取监控目标…</div>
+  <section id="targets" aria-label="手动监控目标"></section>
+  <p class="muted">浏览器运行时，扩展后台按设定间隔自动检测；关闭 AWS.SB 标签页不影响。整个浏览器关闭、电脑休眠或关机时，无法继续探测，恢复后自动续查。通知需允许浏览器和 Windows 通知。</p>
+</main>
+<script src="manual-ui.js"></script>
+</body>
+</html>

@@ -663,9 +663,10 @@ function classify(ip,localResp) {
     const panel = document.createElement('div');
     panel.id = 'wallcheck-panel';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.8.3</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.0</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
       <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空本页记录</button></div>
+      <div class="row"><button id="wallcheck-manual-open" title="不依赖 AWS.SB，手动添加和监控 IPv4">手动 IP 监控（独立）</button></div>
       <div style="color:#666;margin-top:7px">本机 ICMP + TCP 双层检测；每 ${AUTO_RECHECK_MINUTES} 分钟复检。同一实例变化持续累计；点击「已知」清除此组记录。</div>
     `;
     document.body.appendChild(panel);
@@ -678,6 +679,13 @@ function classify(ip,localResp) {
     recoveredHistory.style.display='none';
     panel.appendChild(recoveredHistory);
     panel.querySelector('#wallcheck-run').addEventListener('click',()=>runCheck(true));
+    panel.querySelector('#wallcheck-manual-open').addEventListener('click',()=>{
+      chrome.runtime.sendMessage({type:'manual:open'},response=>{
+        if(!response?.ok||chrome.runtime.lastError){
+          document.getElementById('wallcheck-status').textContent='无法打开手动监控窗口';
+        }
+      });
+    });
     panel.querySelector('#wallcheck-clear').addEventListener('click',async ()=>{
       if(!currentScope){
         document.getElementById('wallcheck-status').textContent='本页尚未取得 sgt 隔离标识';

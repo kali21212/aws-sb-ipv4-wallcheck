@@ -12,6 +12,39 @@ It combines a Chromium extension with a localhost probe to:
 - retain unacknowledged IPv4 change history until manually acknowledged (no flashing) and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
 
+## Standalone manual IPv4 monitoring (v1.9.0)
+
+The new toolbar popup, options page and AWS.SB panel button support **manual
+IPv4 targets** completely independently from signed sgt-account lists.
+
+- Add up to 30 separately named IPv4 targets, persisted in Chrome local storage.
+- Choose Ping, TCP 22, or Ping OR TCP 22 as the status **criterion**. The
+  unchanged prebuilt 1.6.1 agent always collects both ICMP and TCP 22; no
+  arbitrary TCP port or external servers are added.
+- Set per-target interval to 1, 5, or 10 minutes. A Chrome MV3 alarm wakes
+  each minute and checks due targets through the existing localhost probe.
+- Saved targets continue to be checked with AWS.SB and management tabs closed
+  **while the browser itself runs**. Closing the browser or suspending Windows
+  pauses monitoring; monitoring resumes on next browser launch. Windows
+  Guardian protects only the localhost agent and cannot keep Chrome running.
+- Edit an IP and the old address immediately stops being monitored; a
+  monotonically increasing generation field protects against delayed results
+  from the old IP. New IP is queued immediately without blocking the editor.
+- Pause/resume targets, check immediately, or delete them. Keep unacknowledged
+  address changes, offline/recovery events, and probe failures until the
+  target's own "已知" acknowledgement button is pressed.
+- One target's events and settings never touch any AWS.SB account baseline.
+  The probe traffic is strictly loopback at 127.0.0.1:17654.
+- A DOWN result means the selected method did not confirm connectivity. It
+  cannot prove that a network provider or state firewall blocked the IP.
+  ERROR explicitly denotes probe failure, not target unreachability.
+- No account credentials, raw signed sgt URL tokens or cookies are stored
+  or sent by the manual monitor. Manual state does not sync between computers.
+
+Regression: node tests/manual-regression.cjs and
+python tests/manual-browser-smoke.py (disposable Chromium profile and local
+127.x loopback IPs, including background alarm with no monitor tabs open).
+
 ## Continuous unacknowledged change history (v1.8.1)
 
 For each stable instance inside its own signed sgt scope, every IPv4 transition that the active browser actually observes is saved as a separate detail row, without a fixed two-event or 500-event limit. A grouped header counts the still-pending changes. The records remain pending across refreshes and browser restarts until the user confirms them. Clicking the group or inline "已知" button deletes ALL pending IPv4-change detail rows for THAT instance inside THAT sgt scope in one background transaction, and closes its change notification. The latest confirmed IPv4 baseline and bounded anti-stale metadata remain so monitoring continues without repeated false transitions; other groups, port errors, agent failures and different sgt scopes are unaffected.
