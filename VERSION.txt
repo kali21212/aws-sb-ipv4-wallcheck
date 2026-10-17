@@ -1,5 +1,5 @@
 AWS.SB IPv4 WallCheck Portable
-Browser extension: 1.9.3 (wake recovery + cross-card identity hardening, 2026-10-17)
+Browser extension: 1.9.4 (independent historic-target acknowledgement, 2026-10-18)
 Local probe binary: 1.6.1 (unchanged, compatible)
 Target: aws.sb/#/ec2-instances?sgt=... (sgt hash only stored)
 TCP ports from extension: 22 only; ICMP retained

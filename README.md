@@ -12,6 +12,34 @@ It combines a Chromium extension with a localhost probe to:
 - retain unacknowledged IPv4 change history until manually acknowledged (no flashing) and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
 
+## Historic targets not visible: independent acknowledgement (v1.9.4)
+
+In versions <=1.9.3, the status line appended "N 个历史目标本页未显示"
+from the difference between saved target count and current visible IP count.
+This was NOT a pending alert. Acknowledging agent/port/IP-change alerts could
+not clear it, making old informational state look like an active failure.
+
+- The status line now contains probe-health and checked time ONLY.
+- A separate small, expandable historic-target notice appears only when
+  saved IPs in THIS hashed sgt scope are absent from currently visible IPs.
+  It lists the exact historic IPv4, saved instance label, and last-seen time
+  (if known). The count uses a SET difference, not subtracting two lengths.
+- The new independent "已知" button acknowledges ONLY the exact missing-IP
+  set, stored as hiddenNoticeAckKey in the single-writer scoped coordinator.
+  It is durable across reload and multiple tabs on the same sgt.
+- Ack does NOT delete recorded targets, unacknowledged IP changes, other
+  alarms, current-IP baselines, manual targets or watchdog logs.
+- A NEW set of hidden IPs reopens the informational notice; different sgt
+  scopes have independent acknowledgement state.
+- This is not proof that a hidden target is offline or its AWS account has
+  failed authentication. An AWS.SB page may simply show fewer instances.
+- No additional extension permissions, ports, external endpoints or changes
+  to the existing Guardian or local agent executable.
+
+Tests: node tests/hidden-history-regression.cjs and synthetic Chromium
+tests/thorium-smoke.py, including hide target, inspect IP/label, acknowledge,
+reprobe without reappearing, restore target and ordinary IP change alerts.
+
 ## Startup/resume probe and stable instance parsing (v1.9.3)
 
 1.9.3 addresses two production-observed issues: intermittent local agent

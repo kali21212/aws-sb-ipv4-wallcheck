@@ -23,7 +23,7 @@
     return [...older,...pending].sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
   };
   const emptyRoot = () => ({version:3,scopes:{},globalAlerts:[],agentState:'UNKNOWN',revision:0});
-  const emptyScope = () => ({instances:{},alerts:[],conditions:{},currentIPs:[],updatedAt:0,onboardingNotifiedAt:0});
+  const emptyScope = () => ({instances:{},alerts:[],conditions:{},currentIPs:[],updatedAt:0,onboardingNotifiedAt:0,hiddenNoticeAckKey:''});
 
   function createWallCheckMonitor({read,write,clock=Date.now}) {
     let chain = Promise.resolve();
@@ -50,6 +50,7 @@
         alerts:clone([...scope.alerts,...(root.globalAlerts || [])]),
         instances:clone(scope.instances),
         currentIPs:[...scope.currentIPs],
+        hiddenNoticeAckKey:scope.hiddenNoticeAckKey||'',
         conditions:clone(scope.conditions),
         revision:root.revision||0
       };
@@ -196,6 +197,21 @@
             mark();
           }
           scope.alerts=cleanOld(scope.alerts);
+        } else if (action==='monitor:ack-hidden') {
+          // "已知" applies only to the exact set of previously recorded IPs
+          // missing from THIS visible page. It never clears any IP baseline,
+          // instance history, reachability status or unrelated alert.
+          const submitted=Array.isArray(message.hiddenIPs)?message.hiddenIPs:[];
+          if(!submitted.length || submitted.length>50 ||
+             submitted.some(ip=>!isIP(ip) || !scope.currentIPs.includes(ip))){
+            throw Error('Invalid historic non-visible target list');
+          }
+          const hidden=[...new Set(submitted)].sort();
+          const key=hidden.join('|');
+          if(scope.hiddenNoticeAckKey!==key){
+            scope.hiddenNoticeAckKey=key;
+            mark();
+          }
         } else if (action==='monitor:ack-recovered') {
           const ids = new Set(Array.isArray(message.ids) ?
             message.ids.filter(x=>typeof x==='string').slice(0,1000) : []);

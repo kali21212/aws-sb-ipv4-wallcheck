@@ -107,7 +107,7 @@ try:
     cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-scope-A-123'})
     result=poll('extension panel injection',lambda:ev("document.getElementById('wallcheck-panel')?.textContent || ''"))
     print('PANEL_PRESENT',repr(result[:150]),flush=True)
-    if '1.9.3' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
+    if '1.9.4' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
     text=poll('first 2 IP scanned',lambda:ev("document.getElementById('wallcheck-status')?.textContent?.includes('本机探针') && document.getElementById('wallcheck-count')?.textContent || ''"),seconds=18)
     print('FIRST_SCAN',repr(text),flush=True)
     poll('new scoped monitor notice',lambda:ev(
@@ -118,6 +118,51 @@ try:
     poll('new list acknowledged and removed',lambda:ev(
       "![...document.querySelectorAll('.wc-alert-entry')].some(x=>x.textContent.includes('新监控列表已接入'))"))
     print('SCOPE_FIRST_SEEN_ACK_OK',flush=True)
+    # Previously seen #2 temporarily disappears. It is NOT a fault or
+    # pending alert and needs its own persistent "已知" control.
+    ev("window.__wcCard2=document.getElementById('card2');window.__wcCard2.remove()")
+    poll('historic target shown separately',lambda:ev("""(()=>{
+      const box=document.getElementById('wallcheck-hidden-targets');
+      return box && box.style.display==='block' &&
+        box.textContent.includes('1 个历史目标当前未显示') &&
+        !document.getElementById('wallcheck-status').textContent.includes('历史目标');
+    })()"""))
+    ev("document.querySelector('#wallcheck-hidden-targets details').open=true")
+    assert ev("document.getElementById('wallcheck-hidden-targets').textContent.includes('127.0.0.2')"),'HIDDEN_TARGET_IP_DETAILS_MISSING'
+    ev("document.querySelector('#wallcheck-hidden-targets .wc-hidden-ack').click()")
+    poll('hidden history acknowledged',lambda:ev(
+      "document.getElementById('wallcheck-hidden-targets').style.display==='none'"))
+    ev("document.getElementById('wallcheck-run').click()")
+    poll('ack durable through scan',lambda:ev("""(()=>{
+      const box=document.getElementById('wallcheck-hidden-targets');
+      const status=document.getElementById('wallcheck-status');
+      return box.style.display==='none' && status.textContent.includes('本机探针');
+    })()"""))
+    # User-reported bug happened specifically after reloading the AWS.SB page:
+    # reload the real Chromium tab, then hide the same historic IPv4 again.
+    ev("location.reload()")
+    poll('extension panel after page reload',lambda:ev(
+      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.4')"))
+    poll('reloaded original list verified',lambda:ev(
+      "document.getElementById('wallcheck-status')?.textContent?.includes('本机探针')"))
+    ev("window.__wcCard2=document.getElementById('card2');window.__wcCard2.remove()")
+    poll('hidden ack survives actual F5',lambda:ev("""(()=>{
+      const box=document.getElementById('wallcheck-hidden-targets');
+      return box?.style.display==='none' &&
+        !document.getElementById('wallcheck-status')?.textContent?.includes('历史目标');
+    })()"""))
+    print('ACTUAL_PAGE_RELOAD_ACK_PERSISTS_PASS',flush=True)
+    # A genuine new hidden target-set must be noticed again, even if the
+    # previous one was acknowledged. Existing alert histories are preserved.
+    ev("document.body.appendChild(window.__wcCard2)")
+    poll('visible target restored',lambda:ev(
+      "document.getElementById('card2') !== null && document.querySelectorAll('.wallcheck-badge').length===2"))
+    ev("document.getElementById('card2').remove()")
+    assert ev("document.getElementById('wallcheck-hidden-targets').style.display==='none'"),'SAME_HIDDEN_SET_ALERT_REPEATED'
+    ev("document.body.appendChild(window.__wcCard2)")
+    poll('two live cards again',lambda:ev(
+      "document.querySelectorAll('.card').length===2"))
+    print('HIDDEN_TARGET_ACK_AND_REFRESH_PASS',flush=True)
     def update(ip):
         ev("document.getElementById('ip1').textContent='IP "+ip+"'")
     update('127.0.0.3')
