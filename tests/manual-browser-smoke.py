@@ -108,8 +108,8 @@ try:
     cdp('Fetch.enable',{'patterns':[{'urlPattern':'https://aws.sb/*',
       'resourceType':'Document','requestStage':'Request'}]})
     cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-manual-smoke'})
-    poll('WallCheck 1.9.1 panel',lambda:ev(
-      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.1')"))
+    poll('WallCheck 1.9.2 panel',lambda:ev(
+      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.2')"))
     ev("document.getElementById('wallcheck-manual-open').click()")
     page=poll('manual monitor option tab',lambda:next((x for x in
       requests.get(f'http://127.0.0.1:{port}/json',timeout=1).json()
@@ -160,6 +160,53 @@ try:
       "document.querySelector('.target details')===null"))
     assert ev("document.querySelector('.target .ip')?.textContent?.includes('127.0.0.1')")
     print('MANUAL_ACK_PRESERVES_TARGET_OK',flush=True)
+    # UI regression: only a disposable browser profile; inject a synthetic
+    # stored failure state without probing another person's public IP.
+    ev("""new Promise(ok=>chrome.storage.local.get('wallcheck_manual_ipv4_v1',d=>{
+       const root=d.wallcheck_manual_ipv4_v1,t=root.items[0];
+       const first=Date.now()-120000;
+       t.state='DOWN';t.lastStable='DOWN';t.downSince=first;
+       t.lastCheckedAt=Date.now();
+       t.events=[{id:'test-first-down',kind:'DOWN',ip:t.ip,
+         mode:t.mode,time:first}];
+       chrome.storage.local.set({'wallcheck_manual_ipv4_v1':root},()=>ok(true));
+    }))""")
+    poll('red first-detected time visible',lambda:ev("""(()=>{
+       const el=document.querySelector('.target .outage-time');
+       return !!el && el.textContent.includes('首次检测未确认可达：') &&
+         getComputedStyle(el).color==='rgb(180, 35, 24)' &&
+         /\\d{4}\\/\\d{1,2}\\/\\d{1,2}/.test(el.textContent);
+    })()"""))
+    first_text=ev("document.querySelector('.target .outage-time').textContent")
+    print('MANUAL_RED_DOWN_TIME='+first_text,flush=True)
+    ev("""[...document.querySelectorAll('.target button')].find(x=>
+      x.textContent.includes('已知')).click()""")
+    poll('ack leaves red active outage time',lambda:ev("""(()=>{
+       const el=document.querySelector('.target .outage-time');
+       return !!el && el.textContent.includes('首次检测未确认可达：') &&
+         !document.querySelector('.target details');
+    })()"""))
+    print('MANUAL_ACK_ACTIVE_OUTAGE_TIMESTAMP_PRESERVED',flush=True)
+    ev("""new Promise(ok=>chrome.storage.local.get('wallcheck_manual_ipv4_v1',d=>{
+       const root=d.wallcheck_manual_ipv4_v1,t=root.items[0],from=t.downSince;
+       t.state='UP';t.lastStable='UP';t.lastOutageSince=from;
+       t.downSince=0;t.recoveredAt=Date.now();t.lastCheckedAt=t.recoveredAt;
+       t.events=[{id:'test-recovered',kind:'RECOVERED',ip:t.ip,
+         mode:t.mode,time:t.recoveredAt}];
+       chrome.storage.local.set({'wallcheck_manual_ipv4_v1':root},()=>ok(true));
+    }))""")
+    poll('green recovery timestamp visible',lambda:ev("""(()=>{
+       const el=document.querySelector('.target .recovery-time');
+       return !!el && el.textContent.includes('已恢复可达：') &&
+         getComputedStyle(el).color==='rgb(22, 101, 52)' &&
+         !!document.querySelector('.target .resolved-outage-time') &&
+         !document.querySelector('.target .outage-time');
+    })()"""))
+    ev("""[...document.querySelectorAll('.target button')].find(x=>
+      x.textContent.includes('已知')).click()""")
+    poll('ack hides recovered history banner',lambda:ev(
+      "document.querySelector('.target .recovery-time')===null"))
+    print('MANUAL_GREEN_RECOVERY_AND_ACK_PASS',flush=True)
     # Close the aws.sb tab; manual targets must continue independently.
     cdp('Target.closeTarget',{'targetId':aws_target})
     print('AWS_TAB_CLOSED',flush=True)
@@ -201,6 +248,8 @@ try:
           t.ip==='127.0.0.1' && t.state==='UP')
       }))"""),seconds=30)
     print('MANUAL_BACKGROUND_ALARM_NO_AWS_OR_MANAGER_TAB_PASS',flush=True)
+    poll('target rendered after reopening manager',lambda:ev(
+      "[...document.querySelectorAll('.target button')].some(x=>x.textContent==='删除')"))
     ev("""[...document.querySelectorAll('.target button')].find(x=>x.textContent==='删除').click()""")
     poll('manual target deleted',lambda:ev(
       "document.querySelectorAll('.target').length===0"))

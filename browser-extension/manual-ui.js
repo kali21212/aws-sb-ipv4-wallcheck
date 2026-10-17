@@ -12,6 +12,16 @@
   }
   const time=t=>t?new Date(t).toLocaleString('zh-CN',{hour12:false}):'尚未检测';
   const modeName=m=>({ping:'Ping',tcp22:'TCP 22',either:'Ping 或 TCP 22'}[m]||m);
+  const stamp=v=>Number.isFinite(v)&&v>0?v:0;
+  function legacyDownSince(t){
+    const events=Array.isArray(t.events)?t.events:[];
+    for(let i=events.length-1;i>=0;i--){
+      const e=events[i];
+      if(e.kind==='IP_EDIT'||e.kind==='RECOVERED')break;
+      if(e.kind==='DOWN' && e.ip===t.ip && e.mode===t.mode)return stamp(e.time);
+    }
+    return 0;
+  }
   function status(t){
     if(!t.enabled)return ['已暂停','unknown'];
     if(t.lastCheckedAt && Date.now()-t.lastCheckedAt>t.intervalMinutes*60000+125000)
@@ -85,6 +95,23 @@
         '　TCP 22：'+(t.result?.tcp||'--')+latency(t.result?.tcpMs)+
         '\n最近检测：'+time(t.lastCheckedAt);
       data.style.whiteSpace='pre-line';card.appendChild(data);
+      const firstDown=stamp(t.downSince)||
+        (t.lastStable==='DOWN'?legacyDownSince(t):0);
+      if(t.enabled && t.state==='DOWN' && css==='down'){
+        const line=make('div',firstDown ?
+          '● 首次检测未确认可达：'+time(firstDown) :
+          '● 本次未确认可达，首次发现时间待记录','outage-time');
+        card.appendChild(line);
+      } else if(t.enabled && t.state==='UP' && stamp(t.recoveredAt) &&
+        t.events?.some(e=>e.kind==='RECOVERED'&&e.time===t.recoveredAt&&e.ip===t.ip)){
+        const line=make('div','✓ 已恢复可达：'+time(t.recoveredAt),'recovery-time');
+        card.appendChild(line);
+        if(stamp(t.lastOutageSince))card.appendChild(
+          make('div','上次首次检测不可达：'+time(t.lastOutageSince),'resolved-outage-time'));
+      } else if(firstDown && t.lastStable==='DOWN'){
+        card.appendChild(make('div','上次检测未确认可达：'+time(firstDown)+
+          '（已暂停或待重新验证）','stale-outage-time'));
+      }
       const actions=make('div','','actions');
       actions.append(
         btn('立即检测',()=>action('probeNow',{id:t.id},'检测已提交')),
