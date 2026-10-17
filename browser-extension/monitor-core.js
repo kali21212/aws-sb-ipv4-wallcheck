@@ -100,6 +100,7 @@
           const firstListSeen=records.length>0 &&
             !scope.onboardingNotifiedAt && Object.keys(scope.instances).length===0;
           const pageIPs=new Set();
+          const visibleIpOwners=new Map(records.map(r=>[r.ip,r.instanceId]));
           for (const r of records) {
             pageIPs.add(r.ip);
             const prev=scope.instances[r.instanceId];
@@ -134,6 +135,12 @@
             const staleReverse = oldValue && (!r.changedHere || r.pageOpenedAt < prev.changedAt);
             if (!stableId(r.instanceId) || staleReverse || (!sourceFresh && !sourceUpdated)) continue;
             const before=prev.ip;
+            const differentOwner=visibleIpOwners.get(before);
+            // When previous IP is STILL shown on another instance card in
+            // the same scope, the old identity was probably cross-bound
+            // during partial page loading. Repair that baseline but NEVER
+            // assert a genuine server IP change or send its desktop alert.
+            const crossed=differentOwner && differentOwner!==r.instanceId;
             const history=Array.isArray(prev.history)?prev.history.slice(-39):[];
             history.push({ip:before,replacedAt:now});
             scope.instances[r.instanceId]={
@@ -145,15 +152,33 @@
                 if(ev.instanceId===r.instanceId)ev.label=r.label;
               }
             }
-            // Preserve A->B, B->C as distinct immutable alerts.
+            // Preserve ambiguous transitions as evidence, not as verified
+            // A->B IP changes. Clicking "已知" may later acknowledge them.
             append(scope.alerts,{
-              id:'IP_CHANGE:'+scopeKey+':'+r.instanceId+':'+now+':'+r.ip,
-              kind:'IP_CHANGE',instanceId:r.instanceId,label:r.label,
-              oldIp:before,newIp:r.ip,createdAt:now
+              id:(crossed?'IP_LINK_SUSPECT:':'IP_CHANGE:')+
+                scopeKey+':'+r.instanceId+':'+now+':'+r.ip,
+              kind:crossed?'IP_LINK_SUSPECT':'IP_CHANGE',
+              instanceId:r.instanceId,label:r.label,
+              oldIp:before,newIp:r.ip,createdAt:now,
+              ...(crossed?{reason:'旧 IP 同时属于当前页面另一实例，疑似卡片身份串位，未判定为真实 IP 变化'}:{})
             });
             // Do not keep unreachable status deduped against the old address.
             delete scope.conditions[r.instanceId];
             mark();
+          }
+          // Quarantine pre-1.9.3 false historical IP_CHANGE alerts without
+          // deleting evidence. Only when another visible instance still
+          // carries the alleged old IP and the target's latest IP matches.
+          for(const ev of scope.alerts){
+            if(ev.kind!=='IP_CHANGE' || ev.acknowledged)continue;
+            const owner=visibleIpOwners.get(ev.oldIp);
+            const target=scope.instances[ev.instanceId];
+            if(owner && owner!==ev.instanceId && target?.ip===ev.newIp){
+              ev.kind='IP_LINK_SUSPECT';
+              ev.reason='旧 IP 现属于当前页面另一实例，疑似误关联；原始记录保留待人工确认';
+              ev.quarantinedAt=now;
+              mark();
+            }
           }
           if(firstListSeen){
             scope.onboardingNotifiedAt=now;

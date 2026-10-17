@@ -12,6 +12,62 @@ It combines a Chromium extension with a localhost probe to:
 - retain unacknowledged IPv4 change history until manually acknowledged (no flashing) and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
 
+## Startup/resume probe and stable instance parsing (v1.9.3)
+
+1.9.3 addresses two production-observed issues: intermittent local agent
+unavailability after Windows power resume/fast startup, and false IPv4-change
+alerts when partially loaded EC2 cards borrow an IPv6 ID from an adjacent
+card.
+
+### Safe EC2 instance identity boundary
+- IPv4, the ordinal name (#1 etc), EC2 instance ID and stable IPv6 are read
+  ONLY from a common, single-heading instance card. Never search the entire
+  card grid for missing IPv6 metadata.
+- Until a card has its own stable ID, its IPv4 is still probed but keyed as
+  an untrusted ip-target baseline (no inferred A->B instance transitions).
+- The same stable identity on two different visible cards in one scan is
+  treated as ambiguous rather than recorded as a genuine server IP change.
+- A legacy 1.9.2 IP_CHANGE that uses an old IP still displayed by another
+  instance is flagged IP_LINK_SUSPECT, preserving its original timestamps
+  and IP values. It ceases to appear as a confirmed IP-change banner; the
+  in-page event remains available for manual acknowledgement.
+- Timers and countdown-bar DOM mutations do NOT schedule expensive network
+  rescans if no IP, label or stable machine ID changed. Badge display uses
+  last valid local result or an explicit pending placeholder, avoiding
+  transient gray "未检测" after a previously successful observation.
+- Background periodic scans still run every 10 minutes for AWS.SB;
+  manual targets still run at independent 1/5/10-minute intervals.
+
+### Resume/wake Guardian
+- The Guardian now has a process mutex and reports healthy/paused/error/
+  recovering status truthfully in logs/guardian-health.json. If the agent
+  is absent at login or wake but the supervisor is running, it performs one
+  guarded recovery immediately instead of waiting up to 60 seconds.
+- The existing scheduled task keeps its at-logon and 5-minute fallback.
+  An optional **admin-approved, non-elevating-runtime** companion installer
+  adds TaskScheduler System Power-Troubleshooter Event ID 1 and session-unlock
+  triggers, each after 3 seconds. It never replaces the original actions
+  or raises the task RunLevel. The task XML is backed up before changes.
+- For predictable interactive Windows logins, a user Startup-folder shortcut
+  may also invoke the nonprivileged Guardian hidden. The Guardian mutex and
+  watchdog mutex prevent duplicate recovery loops.
+- Task registration may require a one-time Windows Administrator UAC
+  confirmation. Failure is reported; NO approvals or task rights are bypassed.
+- An OS wake/logon test must be observed separately from source tests. An
+  "AGENT_OFFLINE" toast generated while the probe is truly unavailable may
+  persist as history until acknowledged; do not invent uptime guarantees.
+- No passwords, cookies, AWS credentials, IP change history, agent executable
+  or Windows networking settings are modified in this release.
+
+Unit tests: node tests/card-identity-regression.cjs,
+node tests/false-ip-history-regression.cjs and
+node tests/extension-regression.cjs.
+Browser tests: python tests/thorium-smoke.py and
+python tests/manual-browser-smoke.py.
+Activation: reload the WallCheck extension in thorium://extensions without
+deleting its stored browser profile. Run the local administrator-approved
+Install-WallCheck-Resume-Task.ps1 only after exact task preflight.
+
 ## Visible manual-IP downtime and recovery timestamps (v1.9.2)
 
 The standalone manual monitor now shows the **first OBSERVED failure

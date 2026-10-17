@@ -41,6 +41,7 @@
   let scanTimer = null;
   let mutatingBadges = false;
   let lastFinishedAt = null;
+  let lastDomSignature = null;
 
   function isIPv4(s) {
     const parts = String(s).trim().split('.');
@@ -116,6 +117,7 @@ function monitorRequest(type, fields={}) {
     cache.clear();
     lastCombined.clear();
     recentChanges.clear();
+    lastDomSignature=null;
     renderAlerts();
   }
 
@@ -147,44 +149,56 @@ function monitorRequest(type, fields={}) {
     return map;
   }
 
-  function findInstanceIdNear(cell, ip) {
-    let node = cell;
-    for (let depth = 0; node && node !== document.body && depth < 10; depth++, node = node.parentElement) {
-      const txt = (node.innerText || node.textContent || '').trim();
-      if (!txt || txt.length > 2500 || !txt.includes(ip)) continue;
-      const ids = [...new Set((txt.match(/\bi-[0-9a-f]{8,32}\b/gi) || []).map(x => x.toLowerCase()))];
-      if (ids.length === 1) return ids[0];
+  // Identity evidence must stay INSIDE one individual AWS.SB instance card.
+  // Searching a common parent grid once caused #1 IP to inherit #6 IPv6
+  // while card metadata was loading, creating a false IP_CHANGE alert.
+  function findInstanceCardRoot(cell,ip){
+    let node=cell;
+    const escaped=ip.replace(/\./g,'\\.');
+    const ipLine=new RegExp('(?:^|\\n)\\s*IP\\s*[:：]?\\s*'+escaped+'(?![0-9.])','i');
+    for(let depth=0;node && node!==document.body && depth<13;
+        depth++,node=node.parentElement){
+      const value=(node.innerText||node.textContent||'').trim();
+      if(!value || value.length>2400 || !ipLine.test(value))continue;
+      const headings=[...value.matchAll(/(?:^|\n)\s*#\s*(\d{1,4})\b/g)];
+      if(headings.length===1)return node;
     }
     return null;
   }
 
-function findInstanceLabelNear(cell, ip) {
-    let node = cell;
-    for (let depth = 0; node && node !== document.body && depth < 12; depth++, node = node.parentElement) {
-      const text = (node.innerText || node.textContent || '').trim();
-      if (!text.includes(ip) || text.length > 3000) continue;
-      const heads = [...text.matchAll(/#\s*(\d{1,4})\b/g)];
-      if (heads.length !== 1) continue;
-      const h = heads[0];
-      const lines = text.slice(h.index + h[0].length).split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
-      let name = (lines[0] || '').replace(/^[^\p{L}\p{N}]+/u,'').replace(/^编辑\s*/u,'').trim();
-      name = name.replace(/\s+\d+\s*(?:天|小时|分钟).*$/u,'').trim();
-      name = name.split(/\s{2,}|IPv[46]|地区|型号|配置时间|接近时间|剩余|状态|更换IP|IP\s/iu)[0].trim();
-      if (!name) name = (lines.find(x=>x.length <= 32 && !/^(IP|IPv|型号|地区|配置|剩余|状态)/.test(x)) || '').slice(0,32);
-      return {slot:h[1],label:'#'+h[1]+(name ? ' '+name.slice(0,32) : '')};
-    }
-    return null;
+  function findInstanceIdNear(root){
+    if(!root)return null;
+    const value=(root.innerText||root.textContent||'').trim();
+    const ids=[...new Set((value.match(/\bi-[0-9a-f]{8,32}\b/gi)||[])
+      .map(x=>x.toLowerCase()))];
+    return ids.length===1?ids[0]:null;
   }
-  function findStableIPv6Near(cell,ip) {
-    let node=cell;
-    for(let depth=0;node && node!==document.body && depth<12;depth++,node=node.parentElement){
-      const text=(node.innerText || node.textContent || '').trim();
-      if(!text.includes(ip) || text.length>1800)continue;
-      const values=[...text.matchAll(/(?:IPv6\s*[:：]?\s*)([0-9a-f:]{10,50})/gi)]
-        .map(m=>m[1].toLowerCase()).filter(v=>v.includes(':'));
-      if(values.length && values.length<=3)return [...new Set(values)].sort()[0];
-    }
-    return null;
+
+  function findInstanceLabelNear(root){
+    if(!root)return null;
+    const value=(root.innerText||root.textContent||'').trim();
+    const heads=[...value.matchAll(/(?:^|\n)\s*#\s*(\d{1,4})\b/g)];
+    if(heads.length!==1)return null;
+    const h=heads[0];
+    const lines=value.slice(h.index+h[0].length).split(/\r?\n/)
+      .map(x=>x.trim()).filter(Boolean);
+    let name=(lines[0]||'').replace(/^[^\p{L}\p{N}]+/u,'')
+      .replace(/^编辑\s*/u,'').trim();
+    name=name.replace(/\s+\d+\s*(?:天|小时|分钟).*$/u,'').trim();
+    name=name.split(/\s{2,}|IPv[46]|地区|型号|配置时间|接近时间|剩余|状态|更换IP|IP\s/iu)[0].trim();
+    if(!name)name=(lines.find(x=>x.length<=32 &&
+      !/^(IP|IPv|型号|地区|配置|剩余|状态)/.test(x))||'').slice(0,32);
+    return {slot:h[1],label:'#'+h[1]+(name?' '+name.slice(0,32):'')};
+  }
+
+  function findStableIPv6Near(root){
+    if(!root)return null;
+    const value=(root.innerText||root.textContent||'').trim();
+    const addresses=[...new Set([...value.matchAll(/(?:IPv6\s*[:：]?\s*)([0-9a-f:]{10,50})/gi)]
+      .map(m=>m[1].toLowerCase()).filter(v=>v.includes(':')))];
+    // Multiple actual IPv6 addresses from THIS card may be present.
+    return addresses.length>0 && addresses.length<=3 ?
+      addresses.sort()[0]:null;
   }
 
     function collectInstanceRecords(ipCells) {
@@ -192,12 +206,24 @@ function findInstanceLabelNear(cell, ip) {
     for(const [ip,cells] of ipCells) {
       const cell=cells[0];
       if(!cell) continue;
-      const official=findInstanceIdNear(cell,ip);
-      const display=findInstanceLabelNear(cell,ip);
-      const ip6=findStableIPv6Near(cell,ip);
+      const card=findInstanceCardRoot(cell,ip);
+      if(!card)continue; // Never infer an instance from the shared card grid.
+      const official=findInstanceIdNear(card);
+      const display=findInstanceLabelNear(card);
+      const ip6=findStableIPv6Near(card);
       // Ordinals like #1 and #2 identify the display label ONLY, not a machine.
       // With no stable EC2/IPv6 marker, key by IPv4 and suppress IP-change inference.
       const instanceId=official ? 'ec2:'+official : (ip6 ? 'ipv6:'+ip6 : 'ip-target:'+ip);
+      // If transient loading maps two IPs to the same stable identity,
+      // quarantine ambiguity instead of fabricating A->B transitions.
+      if(records.has(instanceId) && records.get(instanceId).ip!==ip){
+        const prior=records.get(instanceId);
+        records.delete(instanceId);
+        records.set('ip-target:'+prior.ip,{...prior,instanceId:'ip-target:'+prior.ip});
+        records.set('ip-target:'+ip,{instanceId:'ip-target:'+ip,ip,cell,
+          label:display?.label||'IPv4 '+ip});
+        continue;
+      }
       records.set(instanceId,{
         instanceId,ip,cell,label:display?.label || (official ? '实例 '+official : 'IPv4 '+ip)
       });
@@ -386,6 +412,7 @@ function observedRecords(records) {
       const block=create('div',event.kind==='SCOPE_ONBOARDED'?'wc-alert-entry wc-new-list':'wc-alert-entry');
       const heading=event.kind==='SCOPE_ONBOARDED'
         ?'🆕 新监控列表已接入 · 首次发现 '+(event.observedCount||1)+' 个 IPv4':
+        event.kind==='IP_LINK_SUSPECT'?'⚠ '+event.label+' · 疑似历史 IP 误关联':
         event.kind==='IP_CHANGE'?'🔄 '+event.label+' · IP变化 '+entries.length+' 次':
         event.kind==='AGENT_OFFLINE'?'⛔ 本机检测服务故障':
         event.kind==='EXTENSION_CONTEXT'?'⚠ 浏览器扩展通信失效':
@@ -393,7 +420,9 @@ function observedRecords(records) {
         '🔴 '+event.label+' · 主机未确认可达';
       block.appendChild(create('div','wc-alert-title',heading));
       for(const e of entries){
-        const msg=e.kind==='IP_CHANGE'?e.oldIp+' → '+e.newIp:
+        const msg=e.kind==='IP_LINK_SUSPECT'?
+          e.oldIp+' → '+e.newIp+'｜'+(e.reason||'身份关联待复核'):
+          e.kind==='IP_CHANGE'?e.oldIp+' → '+e.newIp:
           e.kind==='SCOPE_ONBOARDED'?(e.label||'实例')+'｜'+(e.ip||'')+'｜'+(e.reason||''):
           (e.ip?e.ip+'｜':'')+(e.reason||'');
         block.appendChild(create('div','wc-alert-detail',
@@ -457,7 +486,8 @@ function classify(ip,localResp) {
         const cell = cells[0];
         if (!cell) continue;
 
-        const c = combined.get(ip) || {key:'UNKNOWN', text:'❓ 未检测'};
+        const c = combined.get(ip) || lastCombined.get(ip) ||
+          {key:'PENDING',text:'⏳ 等待本机检测结果'};
         const badge = document.createElement('span');
         badge.className = 'wallcheck-badge ' + badgeClass(c.key);
         badge.dataset.ip = ip;
@@ -518,6 +548,7 @@ function classify(ip,localResp) {
       }
       resetLocalScope(scope);
       const instanceRecords = collectInstanceRecords(ipCells);
+      lastDomSignature=domSignature(ipCells,instanceRecords);
       await hydrateAlerts();
       const syncResult = await syncInstanceState(instanceRecords);
       // Scoped coordinator updates instance display names automatically.
@@ -621,6 +652,13 @@ function classify(ip,localResp) {
       }
     }
   }
+  function domSignature(cells,records){
+    const ips=[...cells.keys()].sort();
+    const machines=[...records.values()].map(r=>[r.instanceId,r.ip,r.label]);
+    machines.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    return JSON.stringify([ips,machines]);
+  }
+
   function isPageMutationRelevant(m) {
     const excluded = '#wallcheck-panel,#wallcheck-alert-center,.wallcheck-badge,.wallcheck-change-badge';
     const target = m.target?.nodeType === 1 ? m.target : m.target?.parentElement;
@@ -668,7 +706,7 @@ function classify(ip,localResp) {
     const panel = document.createElement('div');
     panel.id = 'wallcheck-panel';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.2</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.3</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
       <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空本页记录</button></div>
       <div class="row"><button id="wallcheck-manual-open" title="不依赖 AWS.SB，手动添加和监控 IPv4">手动 IP 监控（独立）</button></div>
@@ -708,8 +746,15 @@ function classify(ip,localResp) {
 
     const observer = new MutationObserver(mutations => {
       if (mutatingBadges || !mutations.some(isPageMutationRelevant)) return;
+      // Countdown seconds, uptime bars and AWS status messages mutate DOM
+      // constantly. Do not schedule a probe unless actual IP/name/identity
+      // evidence changed. A 10-minute alarm still forces periodic testing.
+      const currentCells=collectIPCells();
+      const signature=domSignature(currentCells,collectInstanceRecords(currentCells));
+      if(signature===lastDomSignature)return;
+      lastDomSignature=signature;
       clearTimeout(scanTimer);
-      scanTimer = setTimeout(()=>runCheck(false), 700);
+      scanTimer=setTimeout(()=>runCheck(false),700);
     });
     observer.observe(document.body,{childList:true,characterData:true,subtree:true});
 

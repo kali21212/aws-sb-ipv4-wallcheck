@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.9.3 - wake recovery and cross-card false IP change prevention 2026-10-17
+
+- Constrain IP/IPv6/EC2-ID matching to each individual AWS.SB instance
+  card, eliminating accidental borrowing from a partially loaded neighbor.
+- Preserve but quarantine historical likely-cross-bound #6 IP changes as
+  IP_LINK_SUSPECT, never removing the underlying event without user ack.
+- Suppress redundant probes from countdown and uptime UI updates; during
+  re-probe retain the last valid badge or explicitly show a pending state.
+- Upgrade local Guardian with singleton protection, immediate guarded agent
+  recovery on wake and truthful health states.
+- Supply administrator-reviewed wake/unlock Task Scheduler triggers plus
+  nonprivileged login Startup fallback, preserving 5-minute task cadence.
+- No new extension permissions, probe ports, external endpoints, or changes
+  to AWS.SB signed account tokens.
+- Add before/after reproducible #1/#6 collision and false history regression.
+
 ## 1.9.2 - visible manual IPv4 downtime timestamp 2026-10-17
 
 - Show red first-observed unreachability date and time inside the manual card

@@ -104,6 +104,8 @@ const monitor = createWallCheckMonitor({
 });
 
 function newMonitorNotification(event) {
+  // Suspect past DOM association is shown ONLY for manual review in-page.
+  if(event.kind==='IP_LINK_SUSPECT')return;
   const title=event.kind==='SCOPE_ONBOARDED'
     ? 'WallCheck · 新监控列表已接入'
     : event.kind==='IP_CHANGE'
