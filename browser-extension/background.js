@@ -104,14 +104,18 @@ const monitor = createWallCheckMonitor({
 });
 
 function newMonitorNotification(event) {
-  const title=event.kind==='IP_CHANGE'
+  const title=event.kind==='SCOPE_ONBOARDED'
+    ? 'WallCheck · 新监控列表已接入'
+    : event.kind==='IP_CHANGE'
     ? event.label+' · IPv4 已变化'
     : event.kind==='HOST_UNREACHABLE'
       ? event.label+' · 主机可达性未确认'
       : event.kind==='PORT22_UNREACHABLE'
         ? event.label+' · TCP 22 不可访问'
         : 'WallCheck · 本地检测故障';
-  const message=event.kind==='IP_CHANGE'
+  const message=event.kind==='SCOPE_ONBOARDED'
+    ? (event.label||'实例')+' · '+(event.ip||'')+'；'+(event.reason||'已纳入监控')
+    : event.kind==='IP_CHANGE'
     ? event.oldIp+' → '+event.newIp
     : (event.ip ? event.ip+' · ' : '')+(event.reason || '本地检测需要检查');
   try {

@@ -12,6 +12,37 @@ It combines a Chromium extension with a localhost probe to:
 - retain unacknowledged IPv4 change history until manually acknowledged (no flashing) and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
 
+## First-seen AWS.SB monitor-list notice (v1.9.1)
+
+The existing signed sgt-account isolation rule is unchanged. The plugin **never**
+compares two accounts' identically numbered instance labels such as #1 and
+does not invent a cross-account IPv4 transition.
+
+If a previously unseen sgt monitor list FIRST provides at least one valid,
+visible IPv4, the background single-writer emits a DISTINCT
+SCOPE_ONBOARDED notice. It shows an in-page "已知" acknowledgement and makes
+one Windows browser-notification attempt with a first-seen IP example and
+instance label. The notice says a new monitor list was detected, NOT that
+an old account changed its IP or that AWS validated a new account.
+
+The notice is persisted once for that scope. Acknowledgement hides it without
+deleting the new baseline, other scopes, any IP-change history, or target
+reachability alerts. Reload/revisit does not repeat it. Empty pages, login
+errors and 1.9.0 account lists with already recorded instances do NOT
+generate retroactive "new account" notices. Raw sgt tokens are never
+shown in alerts. Explicitly clearing a scope cannot recreate this notice.
+
+Unreachability notifications continue to appear only on new state
+transitions, and depend on browser and Windows notification permissions.
+Original AWS.SB targets are checked every 10 minutes using both ICMP
+and TCP 22. Separate manual targets use per-target 1/5/10-minute intervals;
+the probe always measures BOTH Ping and TCP22 and the chosen mode merely
+selects the criterion for UP/DOWN.
+
+Regression: node tests/new-scope-regression.cjs and isolated
+python tests/thorium-smoke.py (new account notice plus manually acknowledging
+it, then the existing two-sgt IP transition and cross-tab tests).
+
 ## Standalone manual IPv4 monitoring (v1.9.0)
 
 The new toolbar popup, options page and AWS.SB panel button support **manual

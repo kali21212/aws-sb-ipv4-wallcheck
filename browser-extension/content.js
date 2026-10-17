@@ -383,8 +383,10 @@ function observedRecords(records) {
     }
     for(const entries of groups.values()){
       const event=entries[0];
-      const block=create('div','wc-alert-entry');
-      const heading=event.kind==='IP_CHANGE'?'🔄 '+event.label+' · IP变化 '+entries.length+' 次':
+      const block=create('div',event.kind==='SCOPE_ONBOARDED'?'wc-alert-entry wc-new-list':'wc-alert-entry');
+      const heading=event.kind==='SCOPE_ONBOARDED'
+        ?'🆕 新监控列表已接入 · 首次发现 '+(event.observedCount||1)+' 个 IPv4':
+        event.kind==='IP_CHANGE'?'🔄 '+event.label+' · IP变化 '+entries.length+' 次':
         event.kind==='AGENT_OFFLINE'?'⛔ 本机检测服务故障':
         event.kind==='EXTENSION_CONTEXT'?'⚠ 浏览器扩展通信失效':
         event.kind==='PORT22_UNREACHABLE'?'🔴 '+event.label+' · 22端口不可访问':
@@ -392,6 +394,7 @@ function observedRecords(records) {
       block.appendChild(create('div','wc-alert-title',heading));
       for(const e of entries){
         const msg=e.kind==='IP_CHANGE'?e.oldIp+' → '+e.newIp:
+          e.kind==='SCOPE_ONBOARDED'?(e.label||'实例')+'｜'+(e.ip||'')+'｜'+(e.reason||''):
           (e.ip?e.ip+'｜':'')+(e.reason||'');
         block.appendChild(create('div','wc-alert-detail',
           new Date(e.createdAt).toLocaleString()+'  '+msg));
@@ -650,6 +653,8 @@ function classify(ip,localResp) {
       #wallcheck-alert-center{position:fixed;right:16px;bottom:190px;z-index:2147483646;width:min(420px,calc(100vw - 32px));max-height:48vh;overflow:auto;padding:10px;border:1px solid #fdba74;border-radius:10px;background:#fffaf0;color:#713f12;box-shadow:0 8px 30px #0003;font:13px/1.5 Segoe UI,sans-serif}
       .wc-alert-header{font-weight:700;margin-bottom:8px}
       .wc-alert-entry{background:#fff;border:1px solid #fcd9a4;border-radius:8px;padding:8px;margin-top:7px}
+      .wc-new-list{background:#eff6ff;border-color:#93c5fd}
+      .wc-new-list .wc-alert-title{color:#1d4ed8}
       .wc-alert-title{font-weight:700;color:#92400e}
       .wc-alert-detail{overflow-wrap:anywhere;font-size:12px;margin:4px 0}
       .wc-ack-button,.wc-inline-ack{border:1px solid #e8ba73;border-radius:5px;background:#fff;color:#7c3f12;cursor:pointer;padding:2px 6px;margin:3px 0}
@@ -663,7 +668,7 @@ function classify(ip,localResp) {
     const panel = document.createElement('div');
     panel.id = 'wallcheck-panel';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.0</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.1</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
       <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空本页记录</button></div>
       <div class="row"><button id="wallcheck-manual-open" title="不依赖 AWS.SB，手动添加和监控 IPv4">手动 IP 监控（独立）</button></div>
