@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.9.2 - visible manual IPv4 downtime timestamp 2026-10-17
+
+- Show red first-observed unreachability date and time inside the manual card
+  while keeping the latest probe time updated separately.
+- Preserve first failure time through repeated checks, manual acknowledgement
+  and transient probe errors.
+- Display green recovery time and muted previous outage time until ack.
+- Stale/paused results are not presented as live connectivity evidence.
+- Migrate existing unacknowledged DOWN events safely; no fabricated history.
+- Keep manual IP edit, AWS.SB scoped alerts, agent, Guardian and permissions.
+- Add single-writer transition and real browser visual regression tests.
+
 ## 1.9.1 - first-seen account-list notification 2026-10-17
 
 - Show one persisted new-monitor-list notice when a new signed sgt scope

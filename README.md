@@ -12,6 +12,34 @@ It combines a Chromium extension with a localhost probe to:
 - retain unacknowledged IPv4 change history until manually acknowledged (no flashing) and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
 
+## Visible manual-IP downtime and recovery timestamps (v1.9.2)
+
+The standalone manual monitor now shows the **first OBSERVED failure
+timestamp** in bold red while a target is currently DOWN under its selected
+reachability criterion. This is NOT proof of the actual instant a server went
+offline: a 5-minute scan interval can discover a failure later than onset.
+
+- The first failure is stored in the downSince field (local browser storage).
+  Later unsuccessful scans and "已知" do not overwrite or delete this active
+  time. The existing "最近检测" timestamp continues to update each probe.
+- After a valid recovery, show a green recovery timestamp and a muted last
+  failure start. The recovery-history notice disappears once acknowledged.
+  New failures start a new episode.
+- Pause, overdue/stale data, and probe errors never claim a fresh live
+  outage. A stale prior failure is labeled as awaiting re-verification.
+- Existing 1.9.1 targets remain intact. An outstanding DOWN event can supply
+  its original timestamp on the next poll. If the older history was already
+  acknowledged, that original time cannot be reconstructed; the next valid
+  DOWN observation creates the display baseline without fabrication.
+- Editing an IP or monitoring criterion resets the active episode, blocks
+  late results from the old address, and keeps unacknowledged change history.
+- No changes to ICMP+TCP22 probing, 1/5/10-minute intervals, AWS.SB scopes,
+  system notifications or the Windows Guardian. No extra permissions.
+
+Tests: node tests/down-time-regression.cjs and
+python tests/manual-browser-smoke.py (red CSS/date, green recovery, ack,
+and background alarm with no AWS.SB tab).
+
 ## First-seen AWS.SB monitor-list notice (v1.9.1)
 
 The existing signed sgt-account isolation rule is unchanged. The plugin **never**

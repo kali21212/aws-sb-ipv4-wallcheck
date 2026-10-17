@@ -62,6 +62,18 @@
       chain=run.then(()=>{},()=>{});
       return run;
     };
+    // Migrate a still-DOWN 1.9.1 target without inventing the start time.
+    // Old versions kept the DOWN timestamp only in its pending event list.
+    const previousDownEventAt=t=>{
+      const history=Array.isArray(t.events)?t.events:[];
+      for(let i=history.length-1;i>=0;i--){
+        const e=history[i];
+        if(e.kind==='IP_EDIT' || e.kind==='RECOVERED')break;
+        if(e.kind==='DOWN' && e.ip===t.ip && e.mode===t.mode &&
+          Number.isFinite(e.time) && e.time>0)return e.time;
+      }
+      return 0;
+    };
     const event=(root,item,kind,details={})=>{
       const ev={id:'manual-'+(root.nextEvent++),targetId:item.id,ip:item.ip,
         kind,time:clock(),...details};
@@ -78,7 +90,8 @@
         const when=clock();
         const target={id:'m'+root.nextId++, ...input,enabled:true,
           generation:1,createdAt:when,updatedAt:when,lastCheckedAt:0,
-          state:'PENDING',lastStable:'PENDING',result:null,events:[]};
+          state:'PENDING',lastStable:'PENDING',result:null,events:[],
+          downSince:0,lastOutageSince:0,recoveredAt:0};
         root.items.push(target);
         return {changed:true,addedId:target.id};
       });
@@ -101,6 +114,8 @@
           t.state='PENDING';
           t.lastStable='PENDING';
           t.result=null;
+          // An IP or criterion edit starts a fresh monitoring episode.
+          t.downSince=0;t.lastOutageSince=0;t.recoveredAt=0;
           if(old!==next.ip)event(root,t,'IP_EDIT',{oldIp:old,newIp:next.ip});
         }
         return {changed:true};
@@ -137,17 +152,29 @@
           if(item.when<=t.lastCheckedAt)continue;
           const prev=t.state;
           const stableBefore=t.lastStable;
+          const persistedStart=(Number.isFinite(t.downSince)&&t.downSince>0)
+            ? t.downSince : (stableBefore==='DOWN'?previousDownEventAt(t):0);
           const verdict=item.error?{state:'ERROR',ping:'UNKNOWN',tcp:'UNKNOWN'}:
             evaluate(t.mode,item.result);
           t.state=verdict.state;t.result=verdict;t.lastCheckedAt=item.when;
           changed=true;
-          if(verdict.state==='DOWN' && stableBefore!=='DOWN'){
-            notices.push(event(root,t,'DOWN',{mode:t.mode,
-              details:'当前检测方式未确认目标可达'}));
+          if(verdict.state==='DOWN'){
+            // Never slide the FIRST detection time on repeated 1/5/10m polls.
+            t.downSince=stableBefore==='DOWN'?(persistedStart||item.when):item.when;
+            t.recoveredAt=0;
+            if(stableBefore!=='DOWN'){
+              notices.push(event(root,t,'DOWN',{mode:t.mode,time:item.when,
+                details:'当前检测方式未确认目标可达'}));
+            }
           } else if(verdict.state==='UP' && stableBefore==='DOWN'){
-            notices.push(event(root,t,'RECOVERED',{mode:t.mode}));
+            // A recovery is timestamped on the successful probe completion.
+            t.lastOutageSince=persistedStart;
+            t.recoveredAt=item.when;
+            t.downSince=0;
+            notices.push(event(root,t,'RECOVERED',{mode:t.mode,time:item.when}));
           } else if(verdict.state==='ERROR' && prev!=='ERROR'){
-            notices.push(event(root,t,'PROBE_ERROR',{details:clean(item.error).slice(0,150)}));
+            notices.push(event(root,t,'PROBE_ERROR',{time:item.when,
+              details:clean(item.error).slice(0,150)}));
           }
           if(verdict.state==='UP'||verdict.state==='DOWN')t.lastStable=verdict.state;
         }
