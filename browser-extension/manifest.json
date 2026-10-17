@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AWS.SB IPv4 WallCheck Portable",
-  "version": "1.8.3",
+  "version": "1.9.0",
   "description": "Local IPv4 monitor for aws.sb: ICMP plus TCP 22; IPv6 may identify an instance but is never probed.",
   "permissions": [
     "storage",
@@ -25,5 +25,10 @@
       ],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "action": {
+    "default_title": "WallCheck 手动 IP 监控",
+    "default_popup": "manual-monitor.html"
+  },
+  "options_page": "manual-monitor.html"
 }
