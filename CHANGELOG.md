@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.9.4 - separately acknowledge invisible historic targets 2026-10-18
+
+- Remove historical hidden-target count from the active probe health line.
+- Show a dedicated expandable list of missing historic IPs, old labels
+  and last-seen times with a separate "已知" button.
+- Persist acknowledgement of the exact hidden IP set in its hashed sgt scope,
+  without deleting any baseline or genuine warning; reshow if set changes.
+- Fix hidden count using the actual saved/visible IPv4 set difference.
+- Keep Agent Guardian, manually monitored IPv4, ICMP+TCP22 probes, and
+  existing scoped-change notification rules unchanged.
+- Add persistent ack / cross-account isolation regression and a real browser
+  sequence hiding, acknowledging and rescanning a previously visible IP.
+
 ## 1.9.3 - wake recovery and cross-card false IP change prevention 2026-10-17
 
 - Constrain IP/IPv6/EC2-ID matching to each individual AWS.SB instance

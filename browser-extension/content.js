@@ -7,6 +7,8 @@
   const openedAt = Date.now();
   let currentScope = null;
   let scopeCurrentIPs = [];
+  let scopeInstances = {};
+  let hiddenNoticeAckKey = '';
   let lastKnownScope = null;
   let scopeTokenMemo = null;
   let scopeHashMemo = null;
@@ -101,9 +103,12 @@ function monitorRequest(type, fields={}) {
     alertEvents=Array.isArray(snapshot.alerts)?snapshot.alerts:[];
     conditionStates=snapshot.conditions || {};
     scopeCurrentIPs=Array.isArray(snapshot.currentIPs)?snapshot.currentIPs:[];
+    scopeInstances=snapshot.instances||{};
+    hiddenNoticeAckKey=snapshot.hiddenNoticeAckKey||'';
     alertsHydrated=true;
     refreshChangeMarkers();
     renderAlerts();
+    renderHiddenNotice(collectIPCells());
   }
 
   function resetLocalScope(next){
@@ -114,11 +119,14 @@ function monitorRequest(type, fields={}) {
     alertEvents=[];
     conditionStates={};
     scopeCurrentIPs=[];
+    scopeInstances={};
+    hiddenNoticeAckKey='';
     cache.clear();
     lastCombined.clear();
     recentChanges.clear();
     lastDomSignature=null;
     renderAlerts();
+    renderHiddenNotice(collectIPCells());
   }
 
     function collectIPCells() {
@@ -471,7 +479,65 @@ function classify(ip,localResp) {
     return {key:'LOCAL_FAIL',text:'⚠ 本机未确认主机可达（Ping/22均失败）'};
   }
 
-    function badgeClass(key) {
+    function renderHiddenNotice(ipCells){
+    const target=document.getElementById('wallcheck-hidden-targets');
+    if(!target)return;
+    const visible=new Set([...ipCells.keys()]);
+    const hidden=[...new Set(scopeCurrentIPs.filter(ip=>!visible.has(ip)))].sort();
+    const key=hidden.join('|');
+    if(!hidden.length || !alertsHydrated || hiddenNoticeAckKey===key){
+      target.replaceChildren();
+      target.style.display='none';
+      return;
+    }
+    const previouslyExpanded=!!target.querySelector('details')?.open;
+    target.replaceChildren();
+    target.style.display='block';
+    const row=document.createElement('div');
+    row.className='wc-hidden-header';
+    const details=document.createElement('details');
+    const summary=document.createElement('summary');
+    summary.textContent=hidden.length+' 个历史目标当前未显示（查看 IP）';
+    details.appendChild(summary);
+    const matching=Object.entries(scopeInstances||{}).filter(([,inst])=>hidden.includes(inst.ip));
+    const seen=new Set();
+    for(const [instanceId,inst] of matching){
+      if(seen.has(inst.ip))continue;
+      seen.add(inst.ip);
+      const line=document.createElement('div');
+      line.className='wc-hidden-ip';
+      const stamp=inst.lastSeenAt ? new Date(inst.lastSeenAt).toLocaleString() : '未知';
+      line.textContent=(inst.label||instanceId)+' · '+inst.ip+' · 上次记录：'+stamp;
+      details.appendChild(line);
+    }
+    for(const ip of hidden){
+      if(seen.has(ip))continue;
+      const line=document.createElement('div');
+      line.className='wc-hidden-ip';
+      line.textContent='历史 IPv4 '+ip+' · 未找到对应实例标签';
+      details.appendChild(line);
+    }
+    details.open=previouslyExpanded;
+    const ack=document.createElement('button');
+    ack.type='button';
+    ack.className='wc-hidden-ack';
+    ack.textContent='已知';
+    ack.title='仅关闭当前隐藏目标提示；不会删除任何历史或故障告警';
+    ack.addEventListener('click',()=>{
+      ack.disabled=true;
+      monitorRequest('monitor:ack-hidden',{hiddenIPs:hidden}).then(updateFromSnapshot)
+        .catch(err=>{
+          ack.disabled=false;
+          const status=document.getElementById('wallcheck-status');
+          if(status)status.title='历史提示确认失败：'+String(err.message||err);
+          console.error('Hidden-target acknowledgement failed',err);
+        });
+    });
+    row.append(details,ack);
+    target.appendChild(row);
+  }
+
+  function badgeClass(key) {
     if (key === 'LOCAL_OK' || key === 'HOST_OK') return 'wc-ok';
     if (key === 'LOCAL_FAIL' || key === 'PORT_22_UNREACHABLE') return 'wc-bad';
     return 'wc-unknown';
@@ -615,12 +681,13 @@ function classify(ip,localResp) {
       else cache.set(key,{time:checkedAt,value:combined});
       applyBadges(ipCells, combined);
       await updateReachability(instanceRecords, combined);
-      const historicalSkipped=Math.max(0,scopeCurrentIPs.length-ips.length);
-      const skippedText=historicalSkipped ? '｜'+historicalSkipped+' 个历史目标本页未显示' : '';
+      // History is a separate, acknowledgeable informational row, not an
+      // active probe-health warning. Keep it out of the status text entirely.
+      renderHiddenNotice(ipCells);
       const status=document.getElementById('wallcheck-status');
       status.textContent=failedIPs.length ?
-        '⚠ 已验证 '+succeededIPs.length+'/'+ips.length+' 个可见 IPv4｜其余未验证｜15秒后补测'+skippedText :
-        '本机探针✓ · '+ips.length+' 个可见 IPv4 · '+lastFinishedAt.toLocaleTimeString()+skippedText;
+        '⚠ 已验证 '+succeededIPs.length+'/'+ips.length+' 个可见 IPv4｜其余未验证｜15秒后补测' :
+        '本机探针✓ · '+ips.length+' 个可见 IPv4 · '+lastFinishedAt.toLocaleTimeString();
       if(failedIPs.length)retryTimer=setTimeout(()=>runCheck(true),15000);
       document.getElementById('wallcheck-status').title = '';
     } catch (err) {
@@ -679,6 +746,13 @@ function classify(ip,localResp) {
     style.textContent = `
       #wallcheck-panel{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:300px;padding:12px;border:1px solid #ccc;border-radius:10px;background:#fff;box-shadow:0 8px 30px #0003;font:13px/1.45 Segoe UI,sans-serif;color:#222}
       #wallcheck-panel .row{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:7px}
+      #wallcheck-hidden-targets{margin:6px 0;font:12px/1.4 Segoe UI,sans-serif;color:#596b7c}
+      #wallcheck-hidden-targets .wc-hidden-header{display:flex;align-items:flex-start;justify-content:space-between;gap:5px}
+      #wallcheck-hidden-targets details{flex:1;min-width:0}
+      #wallcheck-hidden-targets summary{cursor:pointer}
+      #wallcheck-hidden-targets .wc-hidden-ip{margin:4px 0;padding:4px 5px;background:#f8fafc;border-radius:4px;overflow-wrap:anywhere}
+      #wallcheck-hidden-targets .wc-hidden-ack{padding:1px 7px;border:1px solid #b5c6d6;border-radius:5px;background:#fff;color:#415468;flex-shrink:0}
+      #wallcheck-hidden-targets .wc-hidden-ack:disabled{opacity:.6}
       #wallcheck-recovered-history{position:relative;font:12px/1.4 Segoe UI,sans-serif;color:#237653;margin-top:5px;padding-right:51px;min-height:23px}
       #wallcheck-recovered-history summary{cursor:pointer;padding-top:2px}
       #wallcheck-recovered-history .wc-history-ack{position:absolute;right:0;top:0;padding:1px 7px;border:1px solid #9ad4b1;background:#f0fff4;border-radius:5px;color:#196c3b;font-size:12px;cursor:pointer}
@@ -706,8 +780,9 @@ function classify(ip,localResp) {
     const panel = document.createElement('div');
     panel.id = 'wallcheck-panel';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.3</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.4</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
+      <div id="wallcheck-hidden-targets" style="display:none"></div>
       <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空本页记录</button></div>
       <div class="row"><button id="wallcheck-manual-open" title="不依赖 AWS.SB，手动添加和监控 IPv4">手动 IP 监控（独立）</button></div>
       <div style="color:#666;margin-top:7px">本机 ICMP + TCP 双层检测；每 ${AUTO_RECHECK_MINUTES} 分钟复检。同一实例变化持续累计；点击「已知」清除此组记录。</div>
