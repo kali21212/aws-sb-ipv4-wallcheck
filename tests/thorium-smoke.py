@@ -107,7 +107,7 @@ try:
     cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-scope-A-123'})
     result=poll('extension panel injection',lambda:ev("document.getElementById('wallcheck-panel')?.textContent || ''"))
     print('PANEL_PRESENT',repr(result[:150]),flush=True)
-    if '1.9.5' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
+    if '1.9.6' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
     text=poll('first 2 IP scanned',lambda:ev("document.getElementById('wallcheck-status')?.textContent?.includes('本机探针') && document.getElementById('wallcheck-count')?.textContent || ''"),seconds=18)
     print('FIRST_SCAN',repr(text),flush=True)
     poll('new scoped monitor notice',lambda:ev(
@@ -179,7 +179,7 @@ try:
     # reload the real Chromium tab, then hide the same historic IPv4 again.
     ev("location.reload()")
     poll('extension panel after page reload',lambda:ev(
-      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.5')"))
+      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.6')"))
     poll('reloaded original list verified',lambda:ev(
       "document.getElementById('wallcheck-status')?.textContent?.includes('本机探针')"))
     ev("window.__wcCard2=document.getElementById('card2');window.__wcCard2.remove()")
@@ -288,6 +288,42 @@ try:
     poll('C acknowledgement broadcast to A',lambda:ev(
       "!document.getElementById('wallcheck-alert-center')?.textContent?.includes('127.0.0.4 → 127.0.0.6')"))
     print('CROSS_TAB_ACK_BROADCAST_OK',flush=True)
+    # Recreate the reported 2026-10-23 #1 case: EC2 was replaced, so
+    # both IPv4 AND the stable IPv6 identity differ. The old 1.9.5
+    # machine-ID-only path silently recorded a new target with no toast.
+    ev("""(()=>{
+      document.getElementById('ip1').textContent='IP 127.0.0.7';
+      document.querySelector('#card1 div:nth-child(3)').textContent=
+        'IPv6 2001:db8:123::4';
+      return true;
+    })()""")
+    poll('slot #1 replacement visible in alert',lambda:ev("""(()=>{
+      const text=document.getElementById('wallcheck-alert-center')?.textContent||'';
+      return text.includes('监控组 IP 更新') &&
+        text.includes('127.0.0.6 → 127.0.0.7');
+    })()"""))
+    poll('new instance replacement inline badge',lambda:ev(
+      "[...document.querySelectorAll('.wallcheck-change-badge')].some(x=>x.textContent.includes('127.0.0.6 → 127.0.0.7'))"))
+    print('EC2_REPLACED_IPV4_AND_IPV6_SLOT_ALERT_OK',flush=True)
+    ev("""(()=>{
+      document.getElementById('ip1').textContent='IP 127.0.0.8';
+      document.querySelector('#card1 div:nth-child(3)').textContent=
+        'IPv6 2001:db8:123::5';
+      return true;
+    })()""")
+    poll('replacement change history accumulates 2',lambda:ev("""(()=>{
+      const t=document.getElementById('wallcheck-alert-center')?.textContent||'';
+      return t.includes('127.0.0.7 → 127.0.0.8') &&
+        t.includes('监控组 IP 更新 2 次');
+    })()"""))
+    ev("""[...document.querySelectorAll('.wc-alert-entry')]
+      .find(x=>x.textContent.includes('监控组 IP 更新'))
+      ?.querySelector('.wc-ack-button')?.click()""")
+    poll('slot change group ack cleared',lambda:ev(
+      "!document.getElementById('wallcheck-alert-center')?.textContent?.includes('监控组 IP 更新')"))
+    poll('new slot inline marker ack cleared',lambda:ev(
+      "![...document.querySelectorAll('.wallcheck-change-badge')].some(x=>x.textContent.includes('127.0.0.7 → 127.0.0.8'))"))
+    print('EC2_REPLACEMENT_ACCUMULATED_HISTORY_AND_ACK_PASS',flush=True)
     print('THORIUM_E2E_PASS',flush=True)
 except Exception as e:
     print('THORIUM_E2E_FAIL',repr(e),flush=True)

@@ -205,6 +205,15 @@
           if(!scope.accountStates)scope.accountStates={};
           const raw=Array.isArray(message.records)?message.records.slice(0,50):[];
           const seen=new Set();
+          // The same IPv4 still displayed on a different #n slot means
+          // ambiguous card association. Never claim a real IP change.
+          const pageIpOwners=new Map();
+          for(const e of raw){
+            if(/^[1-9][0-9]{0,3}$/.test(String(e?.slot||'')) && isIP(e?.ip)){
+              const owner=pageIpOwners.get(e.ip)||new Set();
+              owner.add(String(e.slot));pageIpOwners.set(e.ip,owner);
+            }
+          }
           for(const item of raw){
             const slot=String(item?.slot||'');
             if(!/^[1-9][0-9]{0,3}$/.test(slot)||seen.has(slot))continue;
@@ -215,10 +224,14 @@
             const invalid=item.invalid===true;
             const replacing=item.replacing===true;
             const verified=item.verified22===true;
+            const identity=validId(item.instanceId)?item.instanceId:null;
+            const pageOpenedAt=Number.isFinite(item.pageOpenedAt)?item.pageOpenedAt:0;
+            const changedHere=item.changedHere===true;
             let state=scope.accountStates[slot];
             if(!state){
-              state={slot,label,lastIp:ip||null,phase:'NORMAL',
-                episode:0,failedAt:0,lastRecoveredAt:0};
+              state={slot,label,lastIp:ip||null,lastIdentity:identity,
+                phase:'NORMAL',episode:0,failedAt:0,lastRecoveredAt:0,
+                ipChangedAt:0,ipEpoch:0,ipHistory:[]};
               scope.accountStates[slot]=state;
               mark();
             }
@@ -256,16 +269,70 @@
                 });
                 state.phase='NORMAL';state.lastRecoveredAt=now;
                 state.oldIp=null;state.failedAt=0;
+                // Account recovery already has its own single notification;
+                // do not manufacture a second slot-switch popup.
+                if(state.lastIp && state.lastIp!==ip){
+                  state.ipHistory=[...(state.ipHistory||[]).slice(-39),
+                    {ip:state.lastIp,replacedAt:now}];
+                  state.ipChangedAt=now;
+                }
+                state.lastIp=ip;state.lastIdentity=identity||state.lastIdentity||null;
                 mark();
               }else if(state.phase!=='VERIFYING'){
                 state.phase='VERIFYING';mark();
               }
             }
-            // Preserve the pre-failure IP until the current episode resolves.
-            // Never overwrite oldIp with a newly displayed provisional IP.
-            if(ip && !invalid && (!pending||state.phase==='NORMAL') &&
-                state.lastIp!==ip){
-              state.lastIp=ip;mark();
+            // Keep the pre-failure address while the account is recovering.
+            // When healthy and the visible #n slot moves from old IPv4 to
+            // new IPv4, the EC2 ID/IPv6 may ALSO change (recreated instance).
+            // That is a slot-address change, NOT a same-machine IP_CHANGE.
+            // This path prevents 1.9.5 from silently putting oldIP into
+            // hidden-target history without any user alert.
+            if(ip && !invalid && !pending && state.lastIp!==ip){
+              const oldIp=state.lastIp;
+              const ownedElsewhere=Boolean(
+                (oldIp && [...(pageIpOwners.get(oldIp)||[])].some(s=>s!==slot)) ||
+                [...(pageIpOwners.get(ip)||[])].some(s=>s!==slot) ||
+                // The new IP must not be stolen from another #n's saved
+                // baseline either (common transient cross-card mixup).
+                Object.entries(scope.accountStates).some(([other,x])=>
+                  other!==slot && x.lastIp===ip));
+              const history=Array.isArray(state.ipHistory)?state.ipHistory:[];
+              const stale=Boolean(state.ipChangedAt && pageOpenedAt &&
+                pageOpenedAt<state.ipChangedAt &&
+                (!changedHere || history.some(h=>h.ip===ip)));
+              if(ownedElsewhere || stale){
+                // Suspect cross-card association or older tab, not evidence
+                // of a real #n slot change. Keep the confirmed baseline.
+                continue;
+              }
+              const sameIdentity=Boolean(identity && state.lastIdentity &&
+                identity===state.lastIdentity);
+              const tracked=identity && scope.instances[identity];
+              const primaryHandled=Boolean(tracked && tracked.ip===ip &&
+                (tracked.history||[]).some(h=>h.ip===oldIp));
+              if(oldIp && !sameIdentity && !primaryHandled){
+                state.ipEpoch=(state.ipEpoch||0)+1;
+                append(scope.alerts,{
+                  id:'SLOT_IP_CHANGE:'+scopeKey+':'+slot+':'+
+                    state.ipEpoch+':'+now,
+                  kind:'SLOT_IP_CHANGE',slot,label,instanceId:identity,
+                  oldIp,newIp:ip,createdAt:now,
+                  reason:'同一监控组显示的新 IPv4；实例可能已被替换'
+                });
+              }
+              if(oldIp){
+                state.ipHistory=[...history.slice(-39),
+                  {ip:oldIp,replacedAt:now}];
+              }
+              state.lastIp=ip;
+              state.lastIdentity=identity||null;
+              state.ipChangedAt=now;mark();
+            } else if(ip && !invalid && state.lastIp===ip &&
+                identity && state.lastIdentity!==identity){
+              // Learn stable identity after partial card render; same IPv4
+              // is not an IP-change event.
+              state.lastIdentity=identity;mark();
             }
           }
           scope.alerts=cleanOld(scope.alerts);
@@ -293,6 +360,15 @@
             ids.has(e.id) && e.resolvedAt &&
             (e.kind==='AGENT_OFFLINE' || e.kind==='EXTENSION_CONTEXT')));
           if(root.globalAlerts.length!==before)mark();
+        } else if (action==='monitor:ack-slot-group') {
+          const slot=String(message.slot||'');
+          if(!/^[1-9][0-9]{0,3}$/.test(slot))throw Error('Invalid monitored slot');
+          const before=scope.alerts.length;
+          // Group confirmation is unbounded, retaining the latest baseline
+          // and unrelated account/IP/outage events.
+          scope.alerts=scope.alerts.filter(e=>!(
+            e.kind==='SLOT_IP_CHANGE' && e.slot===slot));
+          if(before!==scope.alerts.length)mark();
         } else if (action==='monitor:ack-change-group') {
           const instanceId=message.instanceId;
           if(!validId(instanceId))throw Error('Invalid stable instance ID');
@@ -310,7 +386,7 @@
           // Generic event acknowledgement also physically removes IP
           // change detail rows rather than archiving them.
           scope.alerts=scope.alerts.filter(e=>
-            !(e.kind==='IP_CHANGE' && ids.has(e.id)));
+            !((e.kind==='IP_CHANGE'||e.kind==='SLOT_IP_CHANGE') && ids.has(e.id)));
           if(scope.alerts.length!==previousCount)mark();
           for (const event of [...scope.alerts,...(root.globalAlerts||[])]) {
             if (ids.has(event.id) && !event.acknowledged) {

@@ -12,6 +12,48 @@ It combines a Chromium extension with a localhost probe to:
 - retain unacknowledged IPv4 change history until manually acknowledged (no flashing) and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
 
+## Same sgt, same monitored #n, replaced EC2 instance alerts (v1.9.6)
+
+The 2026-10-23 production screenshots exposed a 1.9.5 false negative:
+#1 displayed IPv4 203.0.113.109, then 203.0.113.105. Its IPv6 also
+changed (2001:db8:bb4:... -> 2001:db8:bf00:...). Since the original
+machine-identity IP_CHANGE monitor is keyed by stable IPv6/EC2 ID, the
+replacement was inserted as a different instance, leaving the old IPv4 in
+"historical targets" but emitting NO actual IP-change notification.
+
+1.9.6 introduces a **distinct monitoring SLOT_IP_CHANGE event**, NOT a
+claim that the new address belongs to the same EC2 machine.
+
+- Use only a single, individually bounded EC2 card's #n slot, with the same
+  hashed signed sgt scope and its last observed IPv4. Recreated EC2
+  instances (new IPv6 plus new IPv4) trigger a desktop notification and a
+  durable in-page/inline "监控组 IP 已更新" A->B event.
+- If the underlying stable EC2/IPv6 ID has NOT changed, continue to use the
+  existing IP_CHANGE path; never submit two popups for one change.
+- Alert promptly when AWS.SB's card changes: reachability is indicated by
+  the separate ICMP/TCP22 indicator; a card update alone is not proof
+  that the new IP is already reachable. Account invalidity and separately
+  verified account recovery remain their own 1.9.5 events.
+- Keep EVERY unacknowledged A->B->C slot change for that #n until the
+  user clicks its own group "已知"; one click removes its entire group,
+  retaining the latest baseline, other slots, other sgt accounts and other
+  alert categories. Browser notifications are attempted per new event.
+- Prevent false changes caused by two card rows using one IPv4: compare
+  against both other visible #n cards and other slots' current baselines.
+  Never borrow another card's IPv6 or machine ID.
+- Protect against delayed/older browser tabs undoing a new address. Preserve
+  last-seen address and up to 40 local dedupe history entries per slot.
+  Do not generate "historical" 2026-10-23 popups retrospectively from
+  screenshots or old hidden targets without an observed actual transition.
+- No account API calls, AWS changes, browser privilege additions, new TCP
+  ports, Guardian modifications, or clearing of previous event history.
+  No emails, passwords or raw sgt tokens are stored in new events.
+
+Tests: node tests/slot-ip-transition-regression.cjs (before patch FAIL,
+after patch PASS); full node tests/extension-regression.cjs; and an
+isolated real Thorium tests/thorium-smoke.py fixture that changes both IPv4
+and IPv6 twice while preserving all existing AWS.SB scoped tests.
+
 ## AWS account failure and automatic replacement notifications (v1.9.5)
 
 The 2026-10-23 local Windows logs show a healthy Guardian and local probe,

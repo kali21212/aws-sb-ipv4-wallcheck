@@ -13,6 +13,9 @@
   let scopeTokenMemo = null;
   let scopeHashMemo = null;
   const localDomIPs = new Map();
+  // #n slot is stable within one sgt list even when AWS.SB creates a new
+  // EC2 instance and both IPv4 and IPv6 are replaced.
+  const localSlotIPs = new Map();
   const ONLY_PORTS = [22];
 
   const cache = new Map();
@@ -127,6 +130,7 @@ function monitorRequest(type, fields={}) {
     recentChanges.clear();
     lastDomSignature=null;
     lastAccountSignature=null;
+    localSlotIPs.clear();
     renderAlerts();
     renderHiddenNotice(collectIPCells());
   }
@@ -250,7 +254,19 @@ function monitorRequest(type, fields={}) {
 
   async function syncAccountSignals(records,verifiedIPs=new Set()){
     if(!currentScope || !records.length)return;
-    const safe=records.map(r=>({...r,verified22:verifiedIPs.has(r.ip)}));
+    const ipCells=collectIPCells();
+    const instances=collectInstanceRecords(ipCells);
+    const identities=new Map([...instances.values()].map(r=>[r.ip,r.instanceId]));
+    const safe=records.map(r=>{
+      const localKey=currentScope+'|'+r.slot;
+      const prior=localSlotIPs.get(localKey);
+      // No account emails, browser page text, raw tokens or credentials.
+      const value={...r,instanceId:identities.get(r.ip)||null,
+        pageOpenedAt:openedAt,changedHere:prior!==undefined && prior!==r.ip,
+        verified22:verifiedIPs.has(r.ip)};
+      if(r.ip)localSlotIPs.set(localKey,r.ip);
+      return value;
+    });
     updateFromSnapshot(await monitorRequest('monitor:account',{records:safe}));
   }
 
@@ -331,8 +347,9 @@ function observedRecords(records) {
     function refreshChangeMarkers() {
     recentChanges.clear();
     for(const event of alertEvents)
-      if(event.kind==='IP_CHANGE' && !event.acknowledged &&
-        !event.resolvedAt && (!event.scope || event.scope===currentScope))
+      if((event.kind==='IP_CHANGE'||event.kind==='SLOT_IP_CHANGE') &&
+        !event.acknowledged && !event.resolvedAt &&
+        (!event.scope || event.scope===currentScope))
         recentChanges.set(event.newIp,event);
   }
 
@@ -388,6 +405,11 @@ function observedRecords(records) {
 
   async function acknowledgeAlerts(ids){
     updateFromSnapshot(await monitorRequest('monitor:ack',{ids}));
+    applyBadges(collectIPCells(),lastCombined);
+  }
+
+  async function acknowledgeSlotChanges(slot){
+    updateFromSnapshot(await monitorRequest('monitor:ack-slot-group',{slot}));
     applyBadges(collectIPCells(),lastCombined);
   }
 
@@ -473,7 +495,8 @@ function observedRecords(records) {
     panel.appendChild(create('div','wc-alert-header','WallCheck 告警 · '+pending.length+' 条待确认'));
     const groups=new Map();
     for(const event of pending){
-      const key=event.kind==='IP_CHANGE'?'change:'+event.instanceId:event.id;
+      const key=event.kind==='SLOT_IP_CHANGE'?'slot-change:'+event.slot:
+        event.kind==='IP_CHANGE'?'change:'+event.instanceId:event.id;
       if(!groups.has(key))groups.set(key,[]);
       groups.get(key).push(event);
     }
@@ -484,6 +507,8 @@ function observedRecords(records) {
         ?'🆕 新监控列表已接入 · 首次发现 '+(event.observedCount||1)+' 个 IPv4':
         event.kind==='ACCOUNT_INVALID'?'🔴 '+event.label+' · AWS账号已失效':
         event.kind==='ACCOUNT_RECOVERED'?'✅ '+event.label+' · 替补后 IP 已验证可达':
+        event.kind==='SLOT_IP_CHANGE'?'🔄 '+event.label+
+          ' · 监控组 IP 更新 '+entries.length+' 次':
         event.kind==='IP_LINK_SUSPECT'?'⚠ '+event.label+' · 疑似历史 IP 误关联':
         event.kind==='IP_CHANGE'?'🔄 '+event.label+' · IP变化 '+entries.length+' 次':
         event.kind==='AGENT_OFFLINE'?'⛔ 本机检测服务故障':
@@ -496,6 +521,8 @@ function observedRecords(records) {
           (e.oldIp?e.oldIp+' → ':'')+(e.newIp||e.ip||'')+'｜'+(e.reason||'已恢复'):
           e.kind==='ACCOUNT_INVALID'?
           (e.ip?e.ip+'｜':'')+(e.reason||'账号无效'):
+          e.kind==='SLOT_IP_CHANGE'?
+          e.oldIp+' → '+e.newIp+'｜'+(e.reason||'同一组别地址更新'):
           e.kind==='IP_LINK_SUSPECT'?
           e.oldIp+' → '+e.newIp+'｜'+(e.reason||'身份关联待复核'):
           e.kind==='IP_CHANGE'?e.oldIp+' → '+e.newIp:
@@ -508,7 +535,9 @@ function observedRecords(records) {
       ack.type='button';
       ack.addEventListener('click',evt=>{
         evt.preventDefault();evt.stopPropagation();
-        (event.kind==='IP_CHANGE'
+        (event.kind==='SLOT_IP_CHANGE'
+          ? acknowledgeSlotChanges(event.slot)
+          : event.kind==='IP_CHANGE'
           ? acknowledgeIPChanges(event.instanceId)
           : acknowledgeAlerts(entries.map(x=>x.id))).catch(console.error);
       });
@@ -633,7 +662,9 @@ function classify(ip,localResp) {
           const changeBadge = document.createElement('span');
           changeBadge.className = 'wallcheck-change-badge';
           changeBadge.dataset.ip = ip;
-          changeBadge.textContent = 'IP已变更：' + change.oldIp + ' → ' + change.newIp + ' ';
+          changeBadge.textContent = (change.kind==='SLOT_IP_CHANGE'
+            ?'监控组 IP 已更新：':'IP已变更：')+
+            change.oldIp + ' → ' + change.newIp + ' ';
           changeBadge.title = (change.label || change.instanceId) + '\n' +
             '变更时间：' + new Date(change.createdAt).toLocaleString();
           const ack = document.createElement('button');
@@ -643,7 +674,9 @@ function classify(ip,localResp) {
           ack.addEventListener('click', e => {
             e.preventDefault();
             e.stopPropagation();
-            acknowledgeIPChanges(change.instanceId).catch(console.error);
+            (change.kind==='SLOT_IP_CHANGE'
+              ? acknowledgeSlotChanges(change.slot)
+              : acknowledgeIPChanges(change.instanceId)).catch(console.error);
           });
           changeBadge.appendChild(ack);
           cell.appendChild(changeBadge);
@@ -856,7 +889,7 @@ function classify(ip,localResp) {
     const panel = document.createElement('div');
     panel.id = 'wallcheck-panel';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.5</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.6</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
       <div id="wallcheck-hidden-targets" style="display:none"></div>
       <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空本页记录</button></div>
