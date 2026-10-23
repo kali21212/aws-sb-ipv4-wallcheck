@@ -134,6 +134,8 @@ function newMonitorNotification(event) {
     ? event.label+' · 替补后 IP 已恢复'
     : event.kind==='SCOPE_ONBOARDED'
     ? 'WallCheck · 新监控列表已接入'
+    : event.kind==='SLOT_IP_CHANGE'
+    ? event.label+' · 监控组 IPv4 已更新'
     : event.kind==='IP_CHANGE'
     ? event.label+' · IPv4 已变化'
     : event.kind==='HOST_UNREACHABLE'
@@ -148,6 +150,8 @@ function newMonitorNotification(event) {
       ' · TCP22已验证可达'
     : event.kind==='SCOPE_ONBOARDED'
     ? (event.label||'实例')+' · '+(event.ip||'')+'；'+(event.reason||'已纳入监控')
+    : event.kind==='SLOT_IP_CHANGE'
+    ? event.oldIp+' → '+event.newIp+' · 同一组别，新实例可能已替换'
     : event.kind==='IP_CHANGE'
     ? event.oldIp+' → '+event.newIp
     : (event.ip ? event.ip+' · ' : '')+(event.reason || '本地检测需要检查');

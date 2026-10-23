@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.9.6 - detect replacement instance IP changes in the same monitored #n (2026-10-23)
+
+- Fix missed #1 monitor IP changes when AWS.SB reprovisions a new EC2 and
+  both IPv4 and IPv6 change: add separately scoped SLOT_IP_CHANGE alerts.
+- Show old->new IPv4 in browser toast, webpage history and inline card badge.
+  Keep per-group A->B->C transitions until one "已知" acknowledgement.
+- Keep original stable-instance IP_CHANGE, and avoid duplicate alerts when
+  original EC2/IPv6 identity remains unchanged.
+- Strict same-sgt scope and single-card slot detection, stale-tab protection,
+  cross-card contamination checks and a stronger replay regression.
+- Preserve AWS-account invalidity/recovery alerts, independent manual IP
+  monitoring, Guardian, local agent and original saved history.
+- No new permissions or AWS write operations.
+
 ## 1.9.5 - account invalidity and replacement notifications 2026-10-23
 
 - Capture "账号无效" and "自动替补" card status in addition to TCP22/ICMP.
