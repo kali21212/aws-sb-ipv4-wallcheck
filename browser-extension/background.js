@@ -52,6 +52,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       priority:2
     },created=>{
       const err=chrome.runtime.lastError;
+      auditNotification({kind:'USER_TEST'},err?'API_ERROR':'API_ACCEPTED');
       sendResponse(err?{ok:false,error:err.message}:{ok:true,id:created});
     });
     return true;
@@ -103,10 +104,35 @@ const monitor = createWallCheckMonitor({
     }))
 });
 
+// A notification create() callback confirms only submission to Chromium,
+ // NOT that Windows actually displayed the toast. Record a privacy-safe
+ // bounded diagnostic log so the next incident is directly auditable.
+const NOTIFY_AUDIT_KEY='wallcheck_notification_attempts_v1';
+let notificationAuditQueue=Promise.resolve();
+function auditNotification(event,result){
+  notificationAuditQueue=notificationAuditQueue.catch(()=>{}).then(()=>
+    new Promise(resolve=>{
+      chrome.storage.local.get([NOTIFY_AUDIT_KEY],data=>{
+        const prior=Array.isArray(data?.[NOTIFY_AUDIT_KEY])?data[NOTIFY_AUDIT_KEY]:[];
+        const record={
+          at:Date.now(),kind:String(event.kind||'UNKNOWN').slice(0,36),
+          slot:String(event.slot||'').slice(0,4),
+          result:result==='API_ACCEPTED'?'API_ACCEPTED':'API_ERROR'
+        };
+        chrome.storage.local.set({[NOTIFY_AUDIT_KEY]:
+          [...prior,record].slice(-120)},()=>resolve());
+      });
+    })
+  );
+}
 function newMonitorNotification(event) {
   // Suspect past DOM association is shown ONLY for manual review in-page.
   if(event.kind==='IP_LINK_SUSPECT')return;
-  const title=event.kind==='SCOPE_ONBOARDED'
+  const title=event.kind==='ACCOUNT_INVALID'
+    ? event.label+' · AWS账号已失效'
+    : event.kind==='ACCOUNT_RECOVERED'
+    ? event.label+' · 替补后 IP 已恢复'
+    : event.kind==='SCOPE_ONBOARDED'
     ? 'WallCheck · 新监控列表已接入'
     : event.kind==='IP_CHANGE'
     ? event.label+' · IPv4 已变化'
@@ -115,7 +141,12 @@ function newMonitorNotification(event) {
       : event.kind==='PORT22_UNREACHABLE'
         ? event.label+' · TCP 22 不可访问'
         : 'WallCheck · 本地检测故障';
-  const message=event.kind==='SCOPE_ONBOARDED'
+  const message=event.kind==='ACCOUNT_INVALID'
+    ? (event.ip?event.ip+' · ':'')+(event.reason||'账号无效，等待自动替补')
+    : event.kind==='ACCOUNT_RECOVERED'
+    ? (event.oldIp?event.oldIp+' → ':'')+(event.newIp||event.ip||'')+
+      ' · TCP22已验证可达'
+    : event.kind==='SCOPE_ONBOARDED'
     ? (event.label||'实例')+' · '+(event.ip||'')+'；'+(event.reason||'已纳入监控')
     : event.kind==='IP_CHANGE'
     ? event.oldIp+' → '+event.newIp
@@ -125,9 +156,15 @@ function newMonitorNotification(event) {
       'wallcheck-'+event.id.replace(/[^a-z0-9_-]/gi,'_').slice(-200),
       {type:'basic',iconUrl:chrome.runtime.getURL('icon.png'),
         title:title.slice(0,120),message:message.slice(0,450),priority:2},
-      () => { void chrome.runtime.lastError; }
+      () => {
+        const result=chrome.runtime.lastError?'API_ERROR':'API_ACCEPTED';
+        auditNotification(event,result);
+      }
     );
-  } catch (_) {/* Permanent in-page records are the fallback. */}
+  } catch (_) {
+    auditNotification(event,'API_ERROR');
+    // Durable in-page account events are always the fallback.
+  }
 }
 
 chrome.runtime.onMessage.addListener((msg,sender,sendResponse) => {
