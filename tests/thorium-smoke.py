@@ -107,7 +107,7 @@ try:
     cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-scope-A-123'})
     result=poll('extension panel injection',lambda:ev("document.getElementById('wallcheck-panel')?.textContent || ''"))
     print('PANEL_PRESENT',repr(result[:150]),flush=True)
-    if '1.9.4' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
+    if '1.9.5' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
     text=poll('first 2 IP scanned',lambda:ev("document.getElementById('wallcheck-status')?.textContent?.includes('本机探针') && document.getElementById('wallcheck-count')?.textContent || ''"),seconds=18)
     print('FIRST_SCAN',repr(text),flush=True)
     poll('new scoped monitor notice',lambda:ev(
@@ -118,6 +118,43 @@ try:
     poll('new list acknowledged and removed',lambda:ev(
       "![...document.querySelectorAll('.wc-alert-entry')].some(x=>x.textContent.includes('新监控列表已接入'))"))
     print('SCOPE_FIRST_SEEN_ACK_OK',flush=True)
+    # Explicit user-style notification test is isolated from daily Thorium.
+    ev("document.getElementById('wallcheck-notification-test').click()")
+    poll('notification API responded',lambda:ev("""(()=>{
+       const s=document.getElementById('wallcheck-notification-test-status');
+       return s && (s.textContent.includes('已提交浏览器通知') ||
+          s.textContent.includes('通知提交失败'));
+    })()"""))
+    status=ev("document.getElementById('wallcheck-notification-test-status').textContent")
+    if '失败' in status:raise AssertionError('TEST_TOAST_CHROMIUM_API_FAILED: '+status)
+    print('TEST_NOTIFICATION_API_ACCEPTED',flush=True)
+    # Synthetic account failure. This is a local, intercepted fixture; it
+    # NEVER modifies the logged-in AWS account or calls AWS account APIs.
+    ev("""(()=>{
+      const error=document.createElement('div');
+      error.id='fixture-account-invalid';error.textContent='账号无效';
+      document.getElementById('card2').appendChild(error);
+      const replacing=document.createElement('div');
+      replacing.id='fixture-replacing';replacing.textContent=
+        '自动替补 · 尝试账号 fictional@invalid.example';
+      document.getElementById('card2').appendChild(replacing);
+      return true;
+    })()""")
+    poll('in-page AWS account invalid alert',lambda:ev(
+      "document.getElementById('wallcheck-alert-center')?.textContent?.includes('AWS账号已失效')"))
+    alert_content=ev("document.getElementById('wallcheck-alert-center').textContent")
+    assert 'fictional@invalid.example' not in alert_content,'EMAIL_LEAK_IN_ALERT'
+    ev("document.querySelector('#fixture-account-invalid').remove()")
+    poll('account alert still pending while replenishment is in progress',lambda:ev(
+      "document.getElementById('wallcheck-alert-center')?.textContent?.includes('AWS账号已失效')"))
+    assert not ev("document.getElementById('wallcheck-alert-center')?.textContent?.includes('替补后 IP 已验证可达')"),'FALSE_ACCOUNT_RECOVERY'
+    ev("document.querySelector('#fixture-replacing').remove()")
+    ev("""[...document.querySelectorAll('.wc-alert-entry')]
+       .find(x=>x.textContent.includes('AWS账号已失效'))
+       ?.querySelector('.wc-ack-button')?.click()""")
+    poll('account invalid acknowledged',lambda:ev(
+      "!document.getElementById('wallcheck-alert-center')?.textContent?.includes('AWS账号已失效')"))
+    print('ACCOUNT_INVALID_E2E_NOTIFICATION_PERSIST_ACK_PASS',flush=True)
     # Previously seen #2 temporarily disappears. It is NOT a fault or
     # pending alert and needs its own persistent "已知" control.
     ev("window.__wcCard2=document.getElementById('card2');window.__wcCard2.remove()")
@@ -142,7 +179,7 @@ try:
     # reload the real Chromium tab, then hide the same historic IPv4 again.
     ev("location.reload()")
     poll('extension panel after page reload',lambda:ev(
-      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.4')"))
+      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.5')"))
     poll('reloaded original list verified',lambda:ev(
       "document.getElementById('wallcheck-status')?.textContent?.includes('本机探针')"))
     ev("window.__wcCard2=document.getElementById('card2');window.__wcCard2.remove()")

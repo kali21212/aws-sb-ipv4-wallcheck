@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.9.5 - account invalidity and replacement notifications 2026-10-23
+
+- Capture "账号无效" and "自动替补" card status in addition to TCP22/ICMP.
+- Per-sgt single-writer account incident history, deduplicated failures,
+  and explicitly TCP22-verified replacement recovery desktop alerts.
+- Disallow spurious recovery when a replacement spinner is active and only
+  the original IP was found available. Keep previous and new IPv4 when known.
+- Add privacy-safe diagnostic audit of browser notification API submissions
+  and a manual "测试通知" button to check Windows notification visibility.
+- Never persist replacement emails or credentials. No modifications to
+  authenticated AWS APIs or account settings.
+- Unit and isolated-browser regressions for this incident path.
+
 ## 1.9.4 - separately acknowledge invisible historic targets 2026-10-18
 
 - Remove historical hidden-target count from the active probe health line.

@@ -12,6 +12,48 @@ It combines a Chromium extension with a localhost probe to:
 - retain unacknowledged IPv4 change history until manually acknowledged (no flashing) and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
 
+## AWS account failure and automatic replacement notifications (v1.9.5)
+
+The 2026-10-23 local Windows logs show a healthy Guardian and local probe,
+but 1.9.4 had NO handler for the AWS.SB card's "账号无效" and "自动替补"
+messages. The real website could replace an invalid account without causing
+a WallCheck notification. These missing historical account events cannot
+be reconstructed from the local probe/watchdog log.
+
+- Read invalid-account status by individual visible #n cards scoped by
+  SHA256(sgt). The account-card #n is NEVER used as EC2 instance identity
+  for normal IP-change inference.
+- On a new failure, persist exactly one ACCOUNT_INVALID event in the
+  single-writer scope and submit an optional desktop notification.
+  Observe ongoing automatic replacement without spamming alerts.
+- After the invalid banner disappears, require an ACTUAL FRESH TCP22 OPEN
+  result for the visible IPv4 before recording ACCOUNT_RECOVERED.
+  An in-progress replacement that still has the original IP does NOT
+  count as recovery just because the old port is still open.
+- Show old->new IP if both addresses were actually observed; preserve
+  every episode's timestamps, including repeat failure after recovery.
+  Pending records have independent "已知" acknowledgements.
+- User-visible account labels are sanitized and truncated. Email addresses,
+  raw account tokens, AWS keys/credentials and page text are NEVER stored.
+  No current AWS account state is modified by this extension feature.
+- The new panel "测试通知" button makes a deliberate, harmless Chromium
+  notification request. A separately stored, bounded diagnostic
+  wallcheck_notification_attempts_v1 log keeps only time, event kind,
+  slot and API_ACCEPTED/API_ERROR.
+- API_ACCEPTED proves only that Chromium accepted the notification call,
+  NOT that Windows actually displayed its toast. The in-page alert is
+  the durable fallback for OS-level notification suppression.
+- Detection requires AWS.SB to be open and Chromium running. No background
+  login or cloud-account poller is installed; actions that happened while
+  the page/browser were closed cannot be backfilled.
+- This update does not change the Guardian, ICMP/TCP22 frequencies, existing
+  IP-change baselines, historical alerts, manual monitoring or browser
+  permissions.
+
+Regression: tests/account-dom-regression.cjs, tests/account-events-regression.cjs
+and isolated Chromium tests/thorium-smoke.py, using synthetic local fixtures
+without touching real accounts.
+
 ## Historic targets not visible: independent acknowledgement (v1.9.4)
 
 In versions <=1.9.3, the status line appended "N 个历史目标本页未显示"

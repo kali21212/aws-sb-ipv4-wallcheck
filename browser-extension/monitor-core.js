@@ -23,7 +23,7 @@
     return [...older,...pending].sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
   };
   const emptyRoot = () => ({version:3,scopes:{},globalAlerts:[],agentState:'UNKNOWN',revision:0});
-  const emptyScope = () => ({instances:{},alerts:[],conditions:{},currentIPs:[],updatedAt:0,onboardingNotifiedAt:0,hiddenNoticeAckKey:''});
+  const emptyScope = () => ({instances:{},alerts:[],conditions:{},currentIPs:[],updatedAt:0,onboardingNotifiedAt:0,hiddenNoticeAckKey:'',accountStates:{}});
 
   function createWallCheckMonitor({read,write,clock=Date.now}) {
     let chain = Promise.resolve();
@@ -52,6 +52,7 @@
         currentIPs:[...scope.currentIPs],
         hiddenNoticeAckKey:scope.hiddenNoticeAckKey||'',
         conditions:clone(scope.conditions),
+        accountStates:clone(scope.accountStates||{}),
         revision:root.revision||0
       };
     };
@@ -195,6 +196,77 @@
           if (JSON.stringify(scope.currentIPs)!==JSON.stringify(ips)) {
             scope.currentIPs=ips;
             mark();
+          }
+          scope.alerts=cleanOld(scope.alerts);
+        } else if (action==='monitor:account') {
+          // AWS.SB credentials, account names and emails are NEVER accepted.
+          // #n is a visual account-card slot inside a hashed sgt scope,
+          // NOT an EC2 machine identity; do not touch instance IP baselines.
+          if(!scope.accountStates)scope.accountStates={};
+          const raw=Array.isArray(message.records)?message.records.slice(0,50):[];
+          const seen=new Set();
+          for(const item of raw){
+            const slot=String(item?.slot||'');
+            if(!/^[1-9][0-9]{0,3}$/.test(slot)||seen.has(slot))continue;
+            seen.add(slot);
+            const ip=isIP(item.ip)?item.ip:null;
+            const label=safeLabel(item.label||('#'+slot))
+              .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+/gi,'[hidden]');
+            const invalid=item.invalid===true;
+            const replacing=item.replacing===true;
+            const verified=item.verified22===true;
+            let state=scope.accountStates[slot];
+            if(!state){
+              state={slot,label,lastIp:ip||null,phase:'NORMAL',
+                episode:0,failedAt:0,lastRecoveredAt:0};
+              scope.accountStates[slot]=state;
+              mark();
+            }
+            const pending=['INVALID','REPLACING','VERIFYING'].includes(state.phase);
+            if(state.label!==label){state.label=label;mark();}
+            if(invalid){
+              if(!pending){
+                state.episode=(state.episode||0)+1;
+                state.failedAt=now;
+                state.oldIp=state.lastIp||ip||null;
+                append(scope.alerts,{
+                  id:'ACCOUNT_INVALID:'+scopeKey+':'+slot+':'+now,
+                  kind:'ACCOUNT_INVALID',slot,label,ip:state.oldIp,
+                  createdAt:now,
+                  reason:'AWS.SB 显示账号无效'+(replacing?'；正在自动替补':'')
+                });
+              }
+              const phase=replacing?'REPLACING':'INVALID';
+              if(state.phase!==phase){state.phase=phase;mark();}
+            } else if(pending){
+              // A disappearing error banner alone is NOT proof of recovery.
+              // Require a real (fresh, not cached) TCP22 OPEN probe result.
+              const replacementSettled=!replacing ||
+                (state.oldIp && ip && state.oldIp!==ip);
+              if(ip && verified && replacementSettled){
+                const oldIp=state.oldIp||null;
+                append(scope.alerts,{
+                  id:'ACCOUNT_RECOVERED:'+scopeKey+':'+slot+':'+now,
+                  kind:'ACCOUNT_RECOVERED',slot,label,
+                  oldIp,newIp:ip,ip,createdAt:now,
+                  failedAt:state.failedAt||0,
+                  reason:oldIp && oldIp!==ip
+                    ?'已发现替补 IP，且 TCP 22 验证可达'
+                    :'账号异常提示已消失，TCP 22 验证可达'
+                });
+                state.phase='NORMAL';state.lastRecoveredAt=now;
+                state.oldIp=null;state.failedAt=0;
+                mark();
+              }else if(state.phase!=='VERIFYING'){
+                state.phase='VERIFYING';mark();
+              }
+            }
+            // Preserve the pre-failure IP until the current episode resolves.
+            // Never overwrite oldIp with a newly displayed provisional IP.
+            if(ip && !invalid && (!pending||state.phase==='NORMAL') &&
+                state.lastIp!==ip){
+              state.lastIp=ip;mark();
+            }
           }
           scope.alerts=cleanOld(scope.alerts);
         } else if (action==='monitor:ack-hidden') {

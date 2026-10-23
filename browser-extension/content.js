@@ -44,6 +44,7 @@
   let mutatingBadges = false;
   let lastFinishedAt = null;
   let lastDomSignature = null;
+  let lastAccountSignature = null;
 
   function isIPv4(s) {
     const parts = String(s).trim().split('.');
@@ -125,6 +126,7 @@ function monitorRequest(type, fields={}) {
     lastCombined.clear();
     recentChanges.clear();
     lastDomSignature=null;
+    lastAccountSignature=null;
     renderAlerts();
     renderHiddenNotice(collectIPCells());
   }
@@ -197,6 +199,66 @@ function monitorRequest(type, fields={}) {
     if(!name)name=(lines.find(x=>x.length<=32 &&
       !/^(IP|IPv|型号|地区|配置|剩余|状态)/.test(x))||'').slice(0,32);
     return {slot:h[1],label:'#'+h[1]+(name?' '+name.slice(0,32):'')};
+  }
+
+  // AWS.SB account-failure/replenishment banners are NOT captured by the
+  // IPv4-only IP_CHANGE watcher. Scope account events by visible #n cards.
+  // The detector extracts ONLY slot/label/IP/booleans, NEVER replacement emails.
+  function collectAccountCards(){
+    const candidates=[...document.querySelectorAll('div,span,strong,h2,h3,h4,button')];
+    const results=new Map();
+    for(const el of candidates){
+      if(el.closest?.('#wallcheck-panel,#wallcheck-alert-center'))continue;
+      const heading=(el.innerText||el.textContent||'').trim();
+      if(heading.length>115)continue;
+      const first=heading.match(/^#\s*([1-9][0-9]{0,3})\b/);
+      if(!first)continue;
+      const slot=first[1];
+      let node=el,card=null,cardSize=0;
+      for(let depth=0;node&&node!==document.body&&depth<13;
+          depth++,node=node.parentElement){
+        const text=(node.innerText||node.textContent||'').trim();
+        if(text.length>2400)break;
+        const headers=[...text.matchAll(/(?:^|\n)\s*#\s*([1-9][0-9]{0,3})\b/g)];
+        if(headers.length!==1 || headers[0][1]!==slot)break;
+        if(/(?:^|\n)\s*IP\s*[:：]?\s*\d|账号无效|帳號無效|自动替补|型[号號]|AuthFailure/i.test(text)){
+          card=node;cardSize=text.length;
+        }
+      }
+      if(!card)continue;
+      const raw=(card.innerText||card.textContent||'').trim();
+      const name=findInstanceLabelNear(card)?.label || '#'+slot;
+      const label=name.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+/gi,'[hidden]').slice(0,45);
+      const address=raw.match(/(?:^|\n)\s*IP\s*[:：]?\s*((?:\d{1,3}\.){3}\d{1,3})(?![\d.])/i);
+      const ip=address && isIPv4(address[1])?address[1]:null;
+      const invalid=/账号无效|帳號無效|帐号无效|账号已失效|账号已被取消|AuthFailure|InvalidClientTokenId|无法验证提供的访问凭证|账户凭证无效/i.test(raw);
+      const replacing=/自动替补|正在替补|替补中|尝试账号|設定新實例/i.test(raw);
+      const previous=results.get(slot);
+      if(!previous || cardSize>previous.size){
+        results.set(slot,{slot,label,ip,invalid,replacing,size:cardSize});
+      }
+    }
+    return [...results.values()].map(({size,...record})=>record)
+      .sort((a,b)=>Number(a.slot)-Number(b.slot)).slice(0,50);
+  }
+
+  function accountSignalSignature(records){
+    return JSON.stringify(records.map(r=>[
+      r.slot,r.label,r.ip,r.invalid,r.replacing
+    ]));
+  }
+
+  async function syncAccountSignals(records,verifiedIPs=new Set()){
+    if(!currentScope || !records.length)return;
+    const safe=records.map(r=>({...r,verified22:verifiedIPs.has(r.ip)}));
+    updateFromSnapshot(await monitorRequest('monitor:account',{records:safe}));
+  }
+
+  async function scanAccountStatusWithoutProbe(){
+    const signed=await scopeFromURL();
+    if(!signed)return;
+    if(currentScope!==signed)resetLocalScope(signed);
+    await syncAccountSignals(collectAccountCards());
   }
 
   function findStableIPv6Near(root){
@@ -420,6 +482,8 @@ function observedRecords(records) {
       const block=create('div',event.kind==='SCOPE_ONBOARDED'?'wc-alert-entry wc-new-list':'wc-alert-entry');
       const heading=event.kind==='SCOPE_ONBOARDED'
         ?'🆕 新监控列表已接入 · 首次发现 '+(event.observedCount||1)+' 个 IPv4':
+        event.kind==='ACCOUNT_INVALID'?'🔴 '+event.label+' · AWS账号已失效':
+        event.kind==='ACCOUNT_RECOVERED'?'✅ '+event.label+' · 替补后 IP 已验证可达':
         event.kind==='IP_LINK_SUSPECT'?'⚠ '+event.label+' · 疑似历史 IP 误关联':
         event.kind==='IP_CHANGE'?'🔄 '+event.label+' · IP变化 '+entries.length+' 次':
         event.kind==='AGENT_OFFLINE'?'⛔ 本机检测服务故障':
@@ -428,7 +492,11 @@ function observedRecords(records) {
         '🔴 '+event.label+' · 主机未确认可达';
       block.appendChild(create('div','wc-alert-title',heading));
       for(const e of entries){
-        const msg=e.kind==='IP_LINK_SUSPECT'?
+        const msg=e.kind==='ACCOUNT_RECOVERED'?
+          (e.oldIp?e.oldIp+' → ':'')+(e.newIp||e.ip||'')+'｜'+(e.reason||'已恢复'):
+          e.kind==='ACCOUNT_INVALID'?
+          (e.ip?e.ip+'｜':'')+(e.reason||'账号无效'):
+          e.kind==='IP_LINK_SUSPECT'?
           e.oldIp+' → '+e.newIp+'｜'+(e.reason||'身份关联待复核'):
           e.kind==='IP_CHANGE'?e.oldIp+' → '+e.newIp:
           e.kind==='SCOPE_ONBOARDED'?(e.label||'实例')+'｜'+(e.ip||'')+'｜'+(e.reason||''):
@@ -614,8 +682,12 @@ function classify(ip,localResp) {
       }
       resetLocalScope(scope);
       const instanceRecords = collectInstanceRecords(ipCells);
+      const accountCards=collectAccountCards();
       lastDomSignature=domSignature(ipCells,instanceRecords);
+      lastAccountSignature=accountSignalSignature(accountCards);
       await hydrateAlerts();
+      // Account invalidity is recorded BEFORE any slow ICMP/TCP roundtrip.
+      await syncAccountSignals(accountCards);
       const syncResult = await syncInstanceState(instanceRecords);
       // Scoped coordinator updates instance display names automatically.
       if (syncResult.newChanges.length) {
@@ -681,6 +753,10 @@ function classify(ip,localResp) {
       else cache.set(key,{time:checkedAt,value:combined});
       applyBadges(ipCells, combined);
       await updateReachability(instanceRecords, combined);
+      // Recovery is acknowledged only with a fresh successful TCP22 probe,
+      // never merely because a transient red banner disappeared.
+      await syncAccountSignals(collectAccountCards(),new Set(
+        ips.filter(ip=>combined.get(ip)?.key==='LOCAL_OK')));
       // History is a separate, acknowledgeable informational row, not an
       // active probe-health warning. Keep it out of the status text entirely.
       renderHiddenNotice(ipCells);
@@ -780,11 +856,12 @@ function classify(ip,localResp) {
     const panel = document.createElement('div');
     panel.id = 'wallcheck-panel';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.4</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.5</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
       <div id="wallcheck-hidden-targets" style="display:none"></div>
       <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空本页记录</button></div>
-      <div class="row"><button id="wallcheck-manual-open" title="不依赖 AWS.SB，手动添加和监控 IPv4">手动 IP 监控（独立）</button></div>
+      <div class="row"><button id="wallcheck-manual-open" title="不依赖 AWS.SB，手动添加和监控 IPv4">手动 IP 监控（独立）</button><button id="wallcheck-notification-test" title="主动提交一条测试通知，检查 Windows 是否允许显示">测试通知</button></div>
+      <div id="wallcheck-notification-test-status" style="font-size:11px;color:#596b7c"></div>
       <div style="color:#666;margin-top:7px">本机 ICMP + TCP 双层检测；每 ${AUTO_RECHECK_MINUTES} 分钟复检。同一实例变化持续累计；点击「已知」清除此组记录。</div>
     `;
     document.body.appendChild(panel);
@@ -797,6 +874,20 @@ function classify(ip,localResp) {
     recoveredHistory.style.display='none';
     panel.appendChild(recoveredHistory);
     panel.querySelector('#wallcheck-run').addEventListener('click',()=>runCheck(true));
+    panel.querySelector('#wallcheck-notification-test').addEventListener('click',()=>{
+      const out=panel.querySelector('#wallcheck-notification-test-status');
+      out.textContent='正在测试系统通知…';
+      chrome.runtime.sendMessage({type:'notify',event:{
+        id:'NOTIFICATION_TEST_'+Date.now(),
+        title:'WallCheck · 系统通知测试',
+        message:'这是手动测试通知；不代表任何 AWS 账号发生故障'
+      }},result=>{
+        const err=chrome.runtime.lastError;
+        out.textContent=err || !result?.ok
+          ?'浏览器通知提交失败，请检查扩展和 Windows 通知权限'
+          :'已提交浏览器通知；如果没有弹窗，请检查 Windows 勿扰模式与 Thorium 通知设置';
+      });
+    });
     panel.querySelector('#wallcheck-manual-open').addEventListener('click',()=>{
       chrome.runtime.sendMessage({type:'manual:open'},response=>{
         if(!response?.ok||chrome.runtime.lastError){
@@ -821,15 +912,24 @@ function classify(ip,localResp) {
 
     const observer = new MutationObserver(mutations => {
       if (mutatingBadges || !mutations.some(isPageMutationRelevant)) return;
-      // Countdown seconds, uptime bars and AWS status messages mutate DOM
-      // constantly. Do not schedule a probe unless actual IP/name/identity
-      // evidence changed. A 10-minute alarm still forces periodic testing.
+      // Countdown and progress text may mutate continually. Only stable
+      // account status/IPv4 evidence may schedule a new network probe.
       const currentCells=collectIPCells();
+      const accountCards=collectAccountCards();
+      const accountSignature=accountSignalSignature(accountCards);
       const signature=domSignature(currentCells,collectInstanceRecords(currentCells));
-      if(signature===lastDomSignature)return;
+      const accountChanged=accountSignature!==lastAccountSignature;
+      const ipChanged=signature!==lastDomSignature;
+      if(!accountChanged && !ipChanged)return;
+      lastAccountSignature=accountSignature;
       lastDomSignature=signature;
+      if(accountChanged){
+        // This lightweight single-writer event persists failure immediately;
+        // don't wait until a probe request can finish.
+        scanAccountStatusWithoutProbe().catch(()=>{});
+      }
       clearTimeout(scanTimer);
-      scanTimer=setTimeout(()=>runCheck(false),700);
+      scanTimer=setTimeout(()=>runCheck(accountChanged),700);
     });
     observer.observe(document.body,{childList:true,characterData:true,subtree:true});
 
