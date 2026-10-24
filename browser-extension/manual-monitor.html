@@ -48,17 +48,17 @@
 </head>
 <body>
 <main>
-  <header><div><h1>WallCheck · 手动 IPv4 监控</h1><div class="muted">独立于 AWS.SB，长期保存监控目标和未确认事件</div></div><span class="status up">1.9.6</span></header>
+  <header><div><h1>WallCheck · 手动 IPv4 监控</h1><div class="muted">独立于 AWS.SB，长期保存监控目标和未确认事件</div></div><span class="status up">1.9.7</span></header>
   <section class="panel" aria-labelledby="add-title">
     <h2 id="add-title">添加监控 IP</h2>
     <form id="target-form">
       <label>IPv4 地址<input id="ip" type="text" inputmode="decimal" autocomplete="off" placeholder="例如 1.1.1.1" required maxlength="15"></label>
       <label>备注名称<input id="label" type="text" maxlength="60" autocomplete="off" placeholder="备用线路"></label>
-      <label>监控方式<select id="mode"><option value="either">Ping 或 TCP22</option><option value="ping">仅按 Ping 判断</option><option value="tcp22">仅按 TCP22 判断</option></select></label>
+      <label>监控方式<select id="mode"><option value="either">双重检测（任一失败红色告警）</option><option value="ping">仅按 Ping 判断</option><option value="tcp22">仅按 TCP22 判断</option></select></label>
       <label>检查间隔<select id="interval"><option value="1">每 1 分钟</option><option value="5">每 5 分钟</option><option value="10">每 10 分钟</option></select></label>
       <div class="actions" style="grid-column:1 / -1"><button type="submit" class="primary" id="submit">添加并立即检测</button><button type="button" id="cancel-edit" hidden>取消编辑</button><button type="button" id="check-all">立即检查全部</button></div>
     </form>
-    <div class="help">现有本地代理仍同时采集 ICMP 与 TCP 22，所选方式决定状态判定；不支持任意 TCP 端口。IP 更新后会停止旧目标记录，立即监控新 IP。</div>
+    <div class="help">默认同时监控 Ping 与 TCP 22：任一项失败即红色告警，只有两项都通过才显示绿色。手动选择“仅按 Ping”或“仅按 TCP22”时只判定所选项；不支持任意 TCP 端口。IP 更新后立即监控新 IP。</div>
   </section>
   <div id="notice" role="status" aria-live="polite"></div>
   <div id="summary">正在读取监控目标…</div>

@@ -11,7 +11,7 @@
     const b=make('button',label);b.type='button';b.addEventListener('click',fn);return b;
   }
   const time=t=>t?new Date(t).toLocaleString('zh-CN',{hour12:false}):'尚未检测';
-  const modeName=m=>({ping:'Ping',tcp22:'TCP 22',either:'Ping 或 TCP 22'}[m]||m);
+  const modeName=m=>({ping:'Ping',tcp22:'TCP 22',either:'Ping + TCP 22（任一失败告警）'}[m]||m);
   const stamp=v=>Number.isFinite(v)&&v>0?v:0;
   function legacyDownSince(t){
     const events=Array.isArray(t.events)?t.events:[];
@@ -26,13 +26,13 @@
     if(!t.enabled)return ['已暂停','unknown'];
     if(t.lastCheckedAt && Date.now()-t.lastCheckedAt>t.intervalMinutes*60000+125000)
       return ['采集已过期','error'];
-    return ({UP:['检测可达','up'],DOWN:['未确认可达','down'],ERROR:['探针异常','error'],
+    return ({UP:[t.mode==='either'?'两项正常':'检测可达','up'],DOWN:['严重告警：检测失败','down'],ERROR:['探针异常','error'],
       UNKNOWN:['检测不确定','unknown'],PENDING:['等待首次检测','unknown']})[t.state]||
       ['等待首次检测','unknown'];
   }
   function eventText(e){
     if(e.kind==='IP_EDIT')return '手动换 IP：'+e.oldIp+' → '+e.newIp;
-    if(e.kind==='DOWN')return '本次未确认目标可达';
+    if(e.kind==='DOWN')return '🔴 严重：监控模式所需检测失败';
     if(e.kind==='RECOVERED')return '目标已恢复可达';
     if(e.kind==='PROBE_ERROR')return '本地探针故障：'+(e.details||'');
     return e.kind;

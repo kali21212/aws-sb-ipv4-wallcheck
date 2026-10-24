@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.9.7 - critical OR alerts and separate bottom-right panels (2026-10-24)
+
+- Severe red event + immediate Chromium notification attempt whenever
+  either ICMP Ping (NO_REPLY/ERROR) OR TCP 22 (TIMEOUT/REFUSED/etc.) fails.
+  The old false-green Ping:NO_REPLY + TCP:OPEN classification is removed.
+- Add PING_UNREACHABLE event with proper state changes and deduplication;
+  preserve separate TCP22 and combined failure details.
+- In manual IPv4 default dual-monitor mode, either leg failing now
+  means DOWN and native critical toast; both must pass to show UP.
+  Explicit Ping-only/TCP-only user modes remain unchanged.
+- Place pending alert panel left of the status panel, bottom-aligned,
+  adapting to status-panel height and viewport width. On a narrow
+  browser window, stack the alert panel above the status panel.
+- Add standalone strict failure regression plus actual Chromium layout
+  assertions at desktop and narrow widths; no data reset or agent change.
+
 ## 1.9.6 - detect replacement instance IP changes in the same monitored #n (2026-10-23)
 
 - Fix missed #1 monitor IP changes when AWS.SB reprovisions a new EC2 and

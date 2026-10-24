@@ -107,11 +107,35 @@ try:
     cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-scope-A-123'})
     result=poll('extension panel injection',lambda:ev("document.getElementById('wallcheck-panel')?.textContent || ''"))
     print('PANEL_PRESENT',repr(result[:150]),flush=True)
-    if '1.9.6' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
+    if '1.9.7' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
     text=poll('first 2 IP scanned',lambda:ev("document.getElementById('wallcheck-status')?.textContent?.includes('本机探针') && document.getElementById('wallcheck-count')?.textContent || ''"),seconds=18)
     print('FIRST_SCAN',repr(text),flush=True)
     poll('new scoped monitor notice',lambda:ev(
       "document.getElementById('wallcheck-alert-center')?.textContent?.includes('新监控列表已接入')"))
+    # True Chromium geometry test: ① alert left of ② status on desktop.
+    cdp('Emulation.setDeviceMetricsOverride',
+        {'width':1100,'height':780,'deviceScaleFactor':1,'mobile':False})
+    ev("window.dispatchEvent(new Event('resize'))")
+    poll('desktop side-by-side alert and status',lambda:ev("""(()=>{
+      const a=document.getElementById('wallcheck-alert-center').getBoundingClientRect();
+      const b=document.getElementById('wallcheck-panel').getBoundingClientRect();
+      return a.width>=280 && b.width>=290 && a.right+10<=b.left &&
+        Math.abs(a.bottom-b.bottom)<=2 && a.left>=0 && b.right<=innerWidth;
+    })()"""))
+    print('ALERT_LEFT_OF_STATUS_DESKTOP_PASS',flush=True)
+    # Smaller window: stack ① ABOVE ② instead of covering status buttons.
+    cdp('Emulation.setDeviceMetricsOverride',
+        {'width':600,'height':800,'deviceScaleFactor':1,'mobile':False})
+    ev("window.dispatchEvent(new Event('resize'))")
+    poll('narrow viewport alert stays above status',lambda:ev("""(()=>{
+      const a=document.getElementById('wallcheck-alert-center').getBoundingClientRect();
+      const b=document.getElementById('wallcheck-panel').getBoundingClientRect();
+      return a.bottom+8<=b.top && a.top>=-1 && a.left>=0 &&
+        a.right<=innerWidth+1 && b.right<=innerWidth+1;
+    })()"""))
+    print('ALERT_STACKS_ABOVE_STATUS_NARROW_PASS',flush=True)
+    cdp('Emulation.clearDeviceMetricsOverride')
+    ev("window.dispatchEvent(new Event('resize'))")
     ev("""[...document.querySelectorAll('.wc-alert-entry')]
        .find(x=>x.textContent.includes('新监控列表已接入'))
        ?.querySelector('.wc-ack-button')?.click()""")
@@ -179,7 +203,7 @@ try:
     # reload the real Chromium tab, then hide the same historic IPv4 again.
     ev("location.reload()")
     poll('extension panel after page reload',lambda:ev(
-      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.6')"))
+      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.7')"))
     poll('reloaded original list verified',lambda:ev(
       "document.getElementById('wallcheck-status')?.textContent?.includes('本机探针')"))
     ev("window.__wcCard2=document.getElementById('card2');window.__wcCard2.remove()")
