@@ -139,9 +139,11 @@ function newMonitorNotification(event) {
     : event.kind==='IP_CHANGE'
     ? event.label+' · IPv4 已变化'
     : event.kind==='HOST_UNREACHABLE'
-      ? event.label+' · 主机可达性未确认'
+      ? event.label+' · 严重：Ping和TCP 22均失败'
+      : event.kind==='PING_UNREACHABLE'
+        ? event.label+' · 严重：Ping无回应'
       : event.kind==='PORT22_UNREACHABLE'
-        ? event.label+' · TCP 22 不可访问'
+        ? event.label+' · 严重：TCP 22不可访问'
         : 'WallCheck · 本地检测故障';
   const message=event.kind==='ACCOUNT_INVALID'
     ? (event.ip?event.ip+' · ':'')+(event.reason||'账号无效，等待自动替补')
@@ -218,7 +220,7 @@ function ensureManualAlarm(){
 }
 function manualNotify(event){
   const kinds={
-    DOWN:'手动 IP 本次未确认可达',
+    DOWN:'🔴 严重：手动 IP 检测失败',
     RECOVERED:'手动 IP 已恢复',
     PROBE_ERROR:'本地探针通信故障'
   };
@@ -228,7 +230,10 @@ function manualNotify(event){
     type:'basic',iconUrl:chrome.runtime.getURL('icon.png'),
     title:('WallCheck · '+kinds[event.kind]).slice(0,110),
     message:(event.ip+' · '+details).slice(0,320),priority:2
-  },()=>{void chrome.runtime.lastError;});
+  },()=>{
+    const ok=!chrome.runtime.lastError;
+    auditNotification({kind:'MANUAL_'+event.kind},ok?'API_ACCEPTED':'API_ERROR');
+  });
 }
 async function manualSendProbe(ips){
   const ctl=new AbortController();

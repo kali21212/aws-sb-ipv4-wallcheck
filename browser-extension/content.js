@@ -362,6 +362,7 @@ function observedRecords(records) {
     function dispatchNotification(event) {
     const title=event.kind==='IP_CHANGE'?event.label+' · IPv4 已变化':
       event.kind==='PORT22_UNREACHABLE'?event.label+' · TCP22不可访问':
+      event.kind==='PING_UNREACHABLE'?event.label+' · Ping严重异常':
       event.kind==='HOST_UNREACHABLE'?event.label+' · 未确认主机可达':
       event.kind==='EXTENSION_CONTEXT'?'WallCheck · 扩展重新加载':
       'WallCheck · 检测服务故障';
@@ -396,6 +397,7 @@ function observedRecords(records) {
     for(const rec of records.values()){
       const key=combined.get(rec.ip)?.key;
       const status=key==='LOCAL_FAIL'?'HOST_UNREACHABLE':
+        key==='PING_UNREACHABLE'?'PING_UNREACHABLE':
         key==='PORT_22_UNREACHABLE'?'PORT22_UNREACHABLE':
         key==='LOCAL_OK'?'OK':null;
       if(status)items.push({instanceId:rec.instanceId,ip:rec.ip,status});
@@ -446,6 +448,31 @@ function observedRecords(records) {
     // the same page as an IP change and does not show legacy ghost markers.
     for(const r of clean)localDomIPs.set(currentScope+'|'+r.instanceId,r.ip);
     return result;
+  }
+
+  function positionWallCheckOverlays(){
+    const status=document.getElementById('wallcheck-panel');
+    const alerts=document.getElementById('wallcheck-alert-center');
+    if(!status || !alerts || status.style.display==='none')return;
+    const vw=window.innerWidth || document.documentElement.clientWidth;
+    const vh=window.innerHeight || document.documentElement.clientHeight;
+    const rect=status.getBoundingClientRect();
+    const margin=16,gap=12,minAlertWidth=280;
+    const freeLeft=rect.left-margin-gap;
+    if(freeLeft>=minAlertWidth){
+      // ① Alert LEFT of ② Status, with equal bottom baseline.
+      alerts.style.right=Math.ceil(vw-rect.left+gap)+'px';
+      alerts.style.bottom=Math.max(margin,Math.ceil(vh-rect.bottom))+'px';
+      alerts.style.width=Math.min(420,Math.floor(freeLeft))+'px';
+      alerts.style.maxHeight=Math.max(100,Math.floor(vh-2*margin))+'px';
+    }else{
+      // Narrow viewport: do NOT overlap the status; stack above it.
+      const availableAbove=Math.max(70,rect.top-margin-gap);
+      alerts.style.right=Math.max(margin,Math.ceil(vw-rect.right))+'px';
+      alerts.style.bottom=Math.max(margin,Math.ceil(vh-rect.top+gap))+'px';
+      alerts.style.width=Math.max(180,Math.min(420,vw-2*margin))+'px';
+      alerts.style.maxHeight=Math.floor(availableAbove)+'px';
+    }
   }
 
     function renderAlerts() {
@@ -513,8 +540,9 @@ function observedRecords(records) {
         event.kind==='IP_CHANGE'?'🔄 '+event.label+' · IP变化 '+entries.length+' 次':
         event.kind==='AGENT_OFFLINE'?'⛔ 本机检测服务故障':
         event.kind==='EXTENSION_CONTEXT'?'⚠ 浏览器扩展通信失效':
-        event.kind==='PORT22_UNREACHABLE'?'🔴 '+event.label+' · 22端口不可访问':
-        '🔴 '+event.label+' · 主机未确认可达';
+        event.kind==='PORT22_UNREACHABLE'?'🔴 '+event.label+' · 严重：TCP 22不可访问':
+        event.kind==='PING_UNREACHABLE'?'🔴 '+event.label+' · 严重：Ping无回应':
+        '🔴 '+event.label+' · 严重：Ping 与 TCP 22均失败';
       block.appendChild(create('div','wc-alert-title',heading));
       for(const e of entries){
         const msg=e.kind==='ACCOUNT_RECOVERED'?
@@ -544,6 +572,7 @@ function observedRecords(records) {
       block.appendChild(ack);
       panel.appendChild(block);
     }
+    positionWallCheckOverlays();
   }
 
   function parsePorts(){ return ONLY_PORTS.slice(); }
@@ -569,11 +598,26 @@ function classify(ip,localResp) {
     const local=localResp?.results?.[ip];
     if(!local)return {key:'LOCAL_OFFLINE',text:'❓ 本机探针无结果'};
     const tcp22=portStates(local).get(22);
-    const ping=local.icmp?.state==='REACHABLE';
-    if(tcp22==='OPEN')return {key:'LOCAL_OK',text:'✅ 22端口可达'+(ping?'｜Ping可达':'｜Ping无回应')};
-    if(ping || tcp22==='REFUSED')
-      return {key:'PORT_22_UNREACHABLE',text:'🔴 主机可达｜22端口不可访问'};
-    return {key:'LOCAL_FAIL',text:'⚠ 本机未确认主机可达（Ping/22均失败）'};
+    const pingState=local.icmp?.state;
+    const pingOK=pingState==='REACHABLE';
+    const pingFailed=pingState==='NO_REPLY' || pingState==='ERROR';
+    const tcpOK=tcp22==='OPEN';
+    const tcpFailed=['REFUSED','TIMEOUT','UNREACHABLE','ERROR'].includes(tcp22);
+    // STRICT OR policy: Ping FAILURE OR TCP22 FAILURE is a red alarm.
+    // Never re-label an unverified/missing response as a proven host fault.
+    if(pingOK && tcpOK)
+      return {key:'LOCAL_OK',text:'✅ 22端口可达｜Ping可达'};
+    if(pingFailed && tcpFailed)
+      return {key:'LOCAL_FAIL',text:'🔴 严重：Ping'+
+        (pingState==='NO_REPLY'?'无回应':'检测失败')+'｜TCP 22不可达'};
+    if(pingFailed)
+      return {key:'PING_UNREACHABLE',text:'🔴 严重：Ping'+
+        (pingState==='NO_REPLY'?'无回应':'检测失败')+
+        (tcpOK?'｜TCP 22可达':'｜TCP 22未验证')};
+    if(tcpFailed)
+      return {key:'PORT_22_UNREACHABLE',
+        text:'🔴 严重：TCP 22不可达'+(pingOK?'｜Ping可达':'｜Ping未验证')};
+    return {key:'PROBE_UNVERIFIED',text:'⚠ Ping/TCP 22结果未完整验证'};
   }
 
     function renderHiddenNotice(ipCells){
@@ -636,7 +680,8 @@ function classify(ip,localResp) {
 
   function badgeClass(key) {
     if (key === 'LOCAL_OK' || key === 'HOST_OK') return 'wc-ok';
-    if (key === 'LOCAL_FAIL' || key === 'PORT_22_UNREACHABLE') return 'wc-bad';
+    if (key === 'LOCAL_FAIL' || key === 'PORT_22_UNREACHABLE' ||
+        key === 'PING_UNREACHABLE') return 'wc-bad';
     return 'wc-unknown';
   }
 
@@ -853,7 +898,7 @@ function classify(ip,localResp) {
     if (document.getElementById('wallcheck-panel')) return;
     const style = document.createElement('style');
     style.textContent = `
-      #wallcheck-panel{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:300px;padding:12px;border:1px solid #ccc;border-radius:10px;background:#fff;box-shadow:0 8px 30px #0003;font:13px/1.45 Segoe UI,sans-serif;color:#222}
+      #wallcheck-panel{position:fixed;right:16px;bottom:16px;z-index:2147483647;box-sizing:border-box;width:326px;max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);overflow-y:auto;padding:12px;border:1px solid #ccc;border-radius:10px;background:#fff;box-shadow:0 8px 30px #0003;font:13px/1.45 Segoe UI,sans-serif;color:#222}
       #wallcheck-panel .row{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:7px}
       #wallcheck-hidden-targets{margin:6px 0;font:12px/1.4 Segoe UI,sans-serif;color:#596b7c}
       #wallcheck-hidden-targets .wc-hidden-header{display:flex;align-items:flex-start;justify-content:space-between;gap:5px}
@@ -871,7 +916,11 @@ function classify(ip,localResp) {
       #wallcheck-panel input[type=text]{width:105px;padding:4px}
       .wallcheck-badge{display:inline-block;margin-left:8px;padding:1px 6px;border-radius:10px;font-size:12px;white-space:nowrap}
       .wallcheck-change-badge{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:10px;font-size:12px;white-space:nowrap;background:#fff3e0;color:#b45309;font-weight:700;border:1px solid #fed7aa}
-      #wallcheck-alert-center{position:fixed;right:16px;bottom:190px;z-index:2147483646;width:min(420px,calc(100vw - 32px));max-height:48vh;overflow:auto;padding:10px;border:1px solid #fdba74;border-radius:10px;background:#fffaf0;color:#713f12;box-shadow:0 8px 30px #0003;font:13px/1.5 Segoe UI,sans-serif}
+      #wallcheck-alert-center{position:fixed;right:354px;bottom:16px;z-index:2147483646;box-sizing:border-box;width:min(420px,calc(100vw - 386px));max-height:calc(100vh - 32px);overflow:auto;padding:10px;border:1px solid #fdba74;border-radius:10px;background:#fffaf0;color:#713f12;box-shadow:0 8px 30px #0003;font:13px/1.5 Segoe UI,sans-serif}
+      @media(max-width:649px){
+        #wallcheck-panel{max-height:48vh}
+        #wallcheck-alert-center{right:16px;width:min(420px,calc(100vw - 32px));bottom:calc(48vh + 28px);max-height:calc(52vh - 44px)}
+      }
       .wc-alert-header{font-weight:700;margin-bottom:8px}
       .wc-alert-entry{background:#fff;border:1px solid #fcd9a4;border-radius:8px;padding:8px;margin-top:7px}
       .wc-new-list{background:#eff6ff;border-color:#93c5fd}
@@ -889,7 +938,7 @@ function classify(ip,localResp) {
     const panel = document.createElement('div');
     panel.id = 'wallcheck-panel';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.6</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.7</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
       <div id="wallcheck-hidden-targets" style="display:none"></div>
       <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空本页记录</button></div>
@@ -906,6 +955,12 @@ function classify(ip,localResp) {
     recoveredHistory.id='wallcheck-recovered-history';
     recoveredHistory.style.display='none';
     panel.appendChild(recoveredHistory);
+    // Track the real rendered status dimensions (font scale, expanding
+    // historical targets, resize), not a brittle fixed bottom/right offset.
+    if(typeof ResizeObserver==='function'){
+      new ResizeObserver(()=>positionWallCheckOverlays()).observe(panel);
+    }
+    window.addEventListener('resize',positionWallCheckOverlays);
     panel.querySelector('#wallcheck-run').addEventListener('click',()=>runCheck(true));
     panel.querySelector('#wallcheck-notification-test').addEventListener('click',()=>{
       const out=panel.querySelector('#wallcheck-notification-test-status');

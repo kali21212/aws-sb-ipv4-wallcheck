@@ -31,12 +31,14 @@
       .find(x=>x.port===22)?.state||'UNKNOWN').toUpperCase();
     const pingUp=ping==='REACHABLE';
     const tcpUp=tcp==='OPEN';
-    const pingDown=['NO_REPLY'].includes(ping);
-    const tcpDown=['REFUSED','TIMEOUT','UNREACHABLE'].includes(tcp);
+    const pingDown=['NO_REPLY','ERROR'].includes(ping);
+    const tcpDown=['REFUSED','TIMEOUT','UNREACHABLE','ERROR'].includes(tcp);
     let state='UNKNOWN';
     if(mode==='ping')state=pingUp?'UP':pingDown?'DOWN':'UNKNOWN';
     else if(mode==='tcp22')state=tcpUp?'UP':tcpDown?'DOWN':'UNKNOWN';
-    else state=(pingUp||tcpUp)?'UP':(pingDown&&tcpDown)?'DOWN':'UNKNOWN';
+    // In dual-mode, a failure in EITHER leg is critical, not a green
+    // reachable verdict from the other leg. Unknown is not proof of DOWN.
+    else state=(pingDown||tcpDown)?'DOWN':(pingUp&&tcpUp)?'UP':'UNKNOWN';
     const port=(Array.isArray(result.ports)?result.ports:[]).find(x=>x.port===22);
     const finiteLatency=v=>Number.isFinite(v)&&v>=0 ? Math.round(v*10)/10 : null;
     return {state,ping,tcp,

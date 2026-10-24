@@ -424,14 +424,15 @@
             // Ignore stale page results if that instance already changed IP.
             if (!inst || inst.ip!==item.ip) continue;
             const next=String(item.status||'');
-            if (!['OK','PORT22_UNREACHABLE','HOST_UNREACHABLE'].includes(next)) continue;
+            if (!['OK','PING_UNREACHABLE','PORT22_UNREACHABLE','HOST_UNREACHABLE'].includes(next)) continue;
             const old=scope.conditions[item.instanceId];
             const fingerprint=next+'|'+item.ip;
             if (old===fingerprint) continue;
             scope.conditions[item.instanceId]=fingerprint;
             for(const event of scope.alerts) {
               if(event.instanceId===item.instanceId &&
-                 (event.kind==='HOST_UNREACHABLE'||event.kind==='PORT22_UNREACHABLE') &&
+                 (event.kind==='HOST_UNREACHABLE'||event.kind==='PORT22_UNREACHABLE'||
+                   event.kind==='PING_UNREACHABLE') &&
                  !event.resolvedAt && event.ip===item.ip && event.kind!==next){
                 event.resolvedAt=now;
               }
@@ -440,7 +441,11 @@
               id:next+':'+scopeKey+':'+item.instanceId+':'+now,
               kind:next,instanceId:item.instanceId,label:inst.label,ip:item.ip,
               createdAt:now,
-              reason:next==='PORT22_UNREACHABLE'?'TCP 22 在本机检测中不可访问':'Ping 与 TCP 22 均未确认可达'
+              reason:next==='PING_UNREACHABLE'?
+                '严重告警：Ping无回应或检测失败；TCP 22可能仍可连接':
+                next==='PORT22_UNREACHABLE'?
+                '严重告警：TCP 22在本机检测中不可访问':
+                '严重告警：Ping与TCP 22均未确认可达'
             });
             mark();
           }

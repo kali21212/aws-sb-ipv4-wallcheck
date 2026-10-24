@@ -16,8 +16,12 @@ const result=(ping,tcp)=>({icmp:{state:ping,latency_ms:9.1},
  assert(!ipValid('01.0.0.1'));assert(!ipValid('example.com'));
  assert.equal(evaluate('ping',result('NO_REPLY','OPEN')).state,'DOWN');
  assert.equal(evaluate('tcp22',result('NO_REPLY','OPEN')).state,'UP');
- assert.equal(evaluate('either',result('NO_REPLY','OPEN')).state,'UP');
+ assert.equal(evaluate('either',result('NO_REPLY','OPEN')).state,'DOWN');
  assert.equal(evaluate('either',result('NO_REPLY','REFUSED')).state,'DOWN');
+ assert.equal(evaluate('either',result('REACHABLE','TIMEOUT')).state,'DOWN');
+ assert.equal(evaluate('either',result('REACHABLE','OPEN')).state,'UP');
+ assert.equal(evaluate('either',result('ERROR','OPEN')).state,'DOWN');
+ assert.equal(evaluate('either',result('REACHABLE','ERROR')).state,'DOWN');
  assert.equal(evaluate('either',null).state,'UNKNOWN');
  await assert.rejects(()=>doIt('add',{ip:'1.1.1.999'}));
  const added=await doIt('add',{ip:'192.0.2.10',label:'#1 自定义',mode:'tcp22',intervalMinutes:1});

@@ -12,6 +12,51 @@ It combines a Chromium extension with a localhost probe to:
 - retain unacknowledged IPv4 change history until manually acknowledged (no flashing) and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
 
+## Strict OR critical alerts and non-overlapping popup layout (v1.9.7)
+
+**User-requested severe alert policy:** one failed leg is sufficient.
+On the AWS.SB EC2 list, when the local probe reports ICMP NO_REPLY
+or ICMP ERROR while TCP 22 is OPEN, the IPv4 badge is RED and
+the background worker creates a durable PING_UNREACHABLE event and
+immediately requests a high-priority Chromium/Windows toast. The same
+applies to TCP22 REFUSED, TIMEOUT, UNREACHABLE or ERROR even if Ping
+succeeds (PORT22_UNREACHABLE); both failures produce HOST_UNREACHABLE.
+ONLY Ping REACHABLE plus TCP 22 OPEN is GREEN. No response/unknown
+data is NOT falsely asserted as a server outage; it is unverified.
+
+An unchanged failure remains a single episode (no repeated toast every
+10 minutes). A new failure status after recovery creates a new event.
+The probe interval is still 10 minutes; "immediate notification" means
+immediate when a scan detects a failed leg, NOT continuous sub-minute
+server monitoring. ICMP can legitimately be blocked while SSH works;
+the red label always distinguishes Ping failure vs. TCP 22 failure,
+never claims SSH is broken merely because Ping fails.
+
+Manual IPv4 monitoring (separate Chromium options page) retains the
+existing per-target 1/5/10-minute schedules. Its default "either"
+mode is now presented as "双重检测（任一失败红色告警）" and is RED/DOWN
+if either measured leg fails, GREEN/UP only if BOTH succeed.
+Explicitly chosen "仅按 Ping" and "仅按 TCP22" still assess only the
+user-selected leg. A missing/unverified result does not falsely
+count as a proven outage. Existing manual targets and events are
+preserved, never reset. Manual DOWN now has an explicit high-priority
+critical title and records a privacy-safe notification API attempt.
+
+**Popup placement:** ① WallCheck warning center is to the LEFT of
+② WallCheck status panel at bottom right in a desktop-sized viewport,
+both bottom-aligned with at least 12px gap. Position is recomputed
+using the status panel's REAL bounding rectangle on content expansion,
+font/UI resize and window resize. On narrow viewports ① stacks above
+② and both panels scroll independently; they cannot overlap.
+This replaces prior independent hardcoded right=16px positions.
+
+No changes to AWS account credentials, scope isolation, saved IP
+history, manual target IPs, original Windows Guardian/Agent processes,
+or browser permissions. All historical events are retained.
+Test with node tests/strict-alert-policy-regression.cjs and
+python tests/thorium-smoke.py real Chromium geometry assertions
+(1100px desktop and 600px narrow). Regression includes all old tests.
+
 ## Same sgt, same monitored #n, replaced EC2 instance alerts (v1.9.6)
 
 The 2026-10-23 production screenshots exposed a 1.9.5 false negative:
