@@ -1,10 +1,11 @@
 (() => {
   'use strict';
 
-  // DOM-only refreshes may reuse a result briefly; the recurring alarm
-  // always forces a NEW probe. Keep cache shorter than the 3-min alarm.
-  const CACHE_MS = 2 * 60 * 1000;
-  const AUTO_RECHECK_MINUTES = 3;
+  // Every browser alarm forces a real probe. DOM refreshes use a short
+  // cache and do not misrepresent cached results as new measurements.
+  const CACHE_MS = 1 * 60 * 1000;
+  const DEFAULT_AUTO_MINUTES = 5;
+  const AUTO_INTERVAL_KEY = 'wallcheck_auto_interval_minutes_v1';
   const SCOPED_MONITOR_VERSION = 3;
   const openedAt = Date.now();
   let currentScope = null;
@@ -928,6 +929,8 @@ function classify(ip,localResp) {
       .wc-history-row{padding:4px 2px;color:#61746b;overflow-wrap:anywhere}
       #wallcheck-panel button{padding:5px 8px;cursor:pointer}
       #wallcheck-panel input[type=text]{width:105px;padding:4px}
+      #wallcheck-auto-minutes{width:58px;min-width:0;padding:4px;font:inherit}
+      #wallcheck-interval-feedback{color:#596b7c;font-size:11px;overflow-wrap:anywhere}
       .wallcheck-badge{display:inline-block;margin-left:8px;padding:1px 6px;border-radius:10px;font-size:12px;white-space:nowrap}
       .wallcheck-change-badge{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:10px;font-size:12px;white-space:nowrap;background:#fff3e0;color:#b45309;font-weight:700;border:1px solid #fed7aa}
       #wallcheck-alert-center{position:fixed;right:354px;bottom:16px;z-index:2147483646;box-sizing:border-box;width:min(420px,calc(100vw - 386px));max-height:calc(100vh - 32px);overflow:auto;padding:10px;border:1px solid #fdba74;border-radius:10px;background:#fffaf0;color:#713f12;box-shadow:0 8px 30px #0003;font:13px/1.5 Segoe UI,sans-serif}
@@ -952,13 +955,15 @@ function classify(ip,localResp) {
     const panel = document.createElement('div');
     panel.id = 'wallcheck-panel';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.8</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.9</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
       <div id="wallcheck-hidden-targets" style="display:none"></div>
       <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空本页记录</button></div>
+      <div class="row"><label for="wallcheck-auto-minutes">自动检测间隔</label><input id="wallcheck-auto-minutes" type="number" min="1" max="60" step="1" value="5" title="1～60 分钟，推荐 5 分钟"/><span>分钟</span><button id="wallcheck-interval-save">保存</button></div>
+      <div id="wallcheck-interval-feedback" aria-live="polite">正在读取设置…</div>
       <div class="row"><button id="wallcheck-manual-open" title="不依赖 AWS.SB，手动添加和监控 IPv4">手动 IP 监控（独立）</button><button id="wallcheck-notification-test" title="主动提交一条测试通知，检查 Windows 是否允许显示">测试通知</button></div>
       <div id="wallcheck-notification-test-status" style="font-size:11px;color:#596b7c"></div>
-      <div style="color:#666;margin-top:7px">本机 ICMP + TCP 双层检测；每 ${AUTO_RECHECK_MINUTES} 分钟复检。同一实例变化持续累计；点击「已知」清除此组记录。</div>
+      <div style="color:#666;margin-top:7px">本机 ICMP + TCP 双层检测；<span id="wallcheck-interval-label">每 ${DEFAULT_AUTO_MINUTES} 分钟复检</span>。同一实例变化持续累计；点击「已知」清除此组记录。</div>
     `;
     document.body.appendChild(panel);
     const alertCenter=document.createElement('div');
@@ -975,6 +980,55 @@ function classify(ip,localResp) {
       new ResizeObserver(()=>positionWallCheckOverlays()).observe(panel);
     }
     window.addEventListener('resize',positionWallCheckOverlays);
+    const intervalInput=panel.querySelector('#wallcheck-auto-minutes');
+    const intervalFeedback=panel.querySelector('#wallcheck-interval-feedback');
+    const intervalSave=panel.querySelector('#wallcheck-interval-save');
+    function showInterval(minutes,message=''){
+      if(!Number.isInteger(minutes)||minutes<1||minutes>60)return;
+      intervalInput.value=String(minutes);
+      panel.querySelector('#wallcheck-interval-label').textContent='每 '+minutes+' 分钟复检';
+      intervalFeedback.textContent=message;
+      positionWallCheckOverlays();
+    }
+    // One global interval per browser profile, shared by all sgt pages.
+    chrome.runtime.sendMessage({type:'auto:get-interval'},reply=>{
+      const error=chrome.runtime.lastError;
+      if(error||!reply?.ok){
+        intervalFeedback.textContent='读取设置失败，可重新加载扩展';
+        return;
+      }
+      showInterval(reply.minutes,'当前已保存：'+reply.minutes+' 分钟');
+    });
+    function saveInterval(){
+      const raw=intervalInput.value.trim();
+      const value=Number(raw);
+      if(!raw||!Number.isInteger(value)||value<1||value>60){
+        intervalFeedback.textContent='请输入 1～60 的整数分钟';
+        return;
+      }
+      intervalSave.disabled=true;
+      intervalFeedback.textContent='正在保存并更新检测计划…';
+      chrome.runtime.sendMessage({type:'auto:set-interval',minutes:value},reply=>{
+        intervalSave.disabled=false;
+        const error=chrome.runtime.lastError;
+        if(error||!reply?.ok){
+          intervalFeedback.textContent='保存失败：'+String(reply?.error||error?.message||'扩展连接失效');
+          return;
+        }
+        showInterval(reply.minutes,'已生效：每 '+reply.minutes+' 分钟自动检测');
+      });
+    }
+    intervalSave.addEventListener('click',saveInterval);
+    intervalInput.addEventListener('keydown',e=>{
+      if(e.key==='Enter'){e.preventDefault();saveInterval();}
+    });
+    chrome.storage.onChanged.addListener((changes,area)=>{
+      if(area!=='local'||!changes?.[AUTO_INTERVAL_KEY])return;
+      const minutes=Number(changes[AUTO_INTERVAL_KEY].newValue);
+      if(Number.isInteger(minutes)&&minutes>=1&&minutes<=60){
+        showInterval(minutes,'已同步：每 '+minutes+' 分钟检测');
+      }
+    });
     panel.querySelector('#wallcheck-run').addEventListener('click',()=>runCheck(true));
     panel.querySelector('#wallcheck-notification-test').addEventListener('click',()=>{
       const out=panel.querySelector('#wallcheck-notification-test-status');

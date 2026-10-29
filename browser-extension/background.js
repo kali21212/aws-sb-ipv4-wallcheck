@@ -1,19 +1,75 @@
 importScripts('monitor-core.js','probe-isolation.js','manual-core.js');
 
 const AUTO_ALARM = 'wallcheck-auto-recheck';
-const AUTO_RECHECK_MINUTES = 3;
+const AUTO_INTERVAL_KEY = 'wallcheck_auto_interval_minutes_v1';
+const DEFAULT_AUTO_MINUTES = 5;
 const ENDPOINT = 'http://127.0.0.1:17654/api/probe';
 
-function ensureAutoAlarm() {
-  chrome.alarms.get(AUTO_ALARM, alarm => {
-    if (alarm && alarm.periodInMinutes === AUTO_RECHECK_MINUTES) return;
-    chrome.alarms.clear(AUTO_ALARM, () => {
-      chrome.alarms.create(AUTO_ALARM, {
-        delayInMinutes: AUTO_RECHECK_MINUTES,
-        periodInMinutes: AUTO_RECHECK_MINUTES
+function validatedAutoMinutes(raw){
+  const value=Number(raw);
+  return raw !== null && raw !== '' && Number.isInteger(value) &&
+    value>=1 && value<=60 ? value : null;
+}
+function savedAutoMinutes(){
+  return new Promise((resolve,reject)=>{
+    chrome.storage.local.get([AUTO_INTERVAL_KEY],data=>{
+      const e=chrome.runtime.lastError;
+      if(e)return reject(Error(e.message));
+      resolve(validatedAutoMinutes(data?.[AUTO_INTERVAL_KEY]) || DEFAULT_AUTO_MINUTES);
+    });
+  });
+}
+function saveAutoMinutes(minutes){
+  return new Promise((resolve,reject)=>{
+    chrome.storage.local.set({[AUTO_INTERVAL_KEY]:minutes},()=>{
+      const e=chrome.runtime.lastError;
+      e?reject(Error(e.message)):resolve();
+    });
+  });
+}
+function replaceAutoAlarm(minutes){
+  return new Promise((resolve,reject)=>{
+    chrome.alarms.get(AUTO_ALARM,alarm=>{
+      const e=chrome.runtime.lastError;
+      if(e)return reject(Error(e.message));
+      if(alarm && alarm.periodInMinutes===minutes)return resolve(minutes);
+      chrome.alarms.clear(AUTO_ALARM,async()=>{
+        const e=chrome.runtime.lastError;
+        if(e)return reject(Error(e.message));
+        try{
+          await chrome.alarms.create(AUTO_ALARM,{
+            delayInMinutes:minutes,periodInMinutes:minutes
+          });
+          resolve(minutes);
+        }catch(error){reject(error);}
       });
     });
   });
+}
+// One alarm and one serialized writer for all aws.sb tabs, across restarts.
+let autoScheduleQueue=Promise.resolve();
+function ensureAutoAlarm(){
+  autoScheduleQueue=autoScheduleQueue.catch(()=>{}).then(async()=>{
+    const minutes=await savedAutoMinutes();
+    return replaceAutoAlarm(minutes);
+  });
+  return autoScheduleQueue;
+}
+function changeAutoInterval(raw){
+  const minutes=validatedAutoMinutes(raw);
+  if(minutes===null)return Promise.reject(Error('间隔必须为 1～60 的整数分钟'));
+  autoScheduleQueue=autoScheduleQueue.catch(()=>{}).then(async()=>{
+    const previous=await savedAutoMinutes();
+    await saveAutoMinutes(minutes);
+    try{return await replaceAutoAlarm(minutes);}
+    catch(error){
+      // A failed rearm must not leave storage showing a known-broken schedule.
+      await saveAutoMinutes(previous).catch(()=>{});
+      await replaceAutoAlarm(previous).catch(()=>{});
+      throw error;
+    }
+  });
+  return autoScheduleQueue;
 }
 
 chrome.runtime.onInstalled.addListener(ensureAutoAlarm);
@@ -38,6 +94,17 @@ chrome.alarms.onAlarm.addListener(alarm => {
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if(msg?.type==='auto:get-interval'){
+    savedAutoMinutes().then(minutes=>sendResponse({ok:true,minutes}))
+      .catch(e=>sendResponse({ok:false,error:String(e.message||e)}));
+    return true;
+  }
+  if(msg?.type==='auto:set-interval'){
+    changeAutoInterval(msg.minutes)
+      .then(minutes=>sendResponse({ok:true,minutes}))
+      .catch(e=>sendResponse({ok:false,error:String(e.message||e)}));
+    return true;
+  }
   if(msg?.type==='notify'){
     const event=msg.event||{};
     if(!chrome.notifications?.create){
