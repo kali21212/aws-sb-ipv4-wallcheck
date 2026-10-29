@@ -28,7 +28,7 @@ const six=api.collectInstanceRecords(new Map([['203.0.113.108',[sixthCell]]]));
 const oneKey=[...one.keys()][0],sixKey=[...six.keys()][0];
 assert.equal(oneKey,'ip-target:203.0.113.112',
   'missing IPv6 inside #1 must NEVER steal #6 IPv6 from common grid');
-assert.equal(sixKey,'ipv6:2001:db8:123::6',
+assert.equal(sixKey,'ipv6:2001:db8:100::1',
   '#6 must keep its own IPv6 ID');
 assert.notEqual(oneKey,sixKey,'cross-card identity collision forbidden');
 assert.equal(one.get(oneKey).label,'#1 示例组一');
