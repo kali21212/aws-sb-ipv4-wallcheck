@@ -2,10 +2,10 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 const code=fs.readFileSync(path.join(__dirname,'../browser-extension/monitor-core.js'),'utf8');
 const ctx={};vm.createContext(ctx);vm.runInContext(code,ctx);
-const id1='ip-target:203.0.113.114';
-const id6='ipv6:2001:db8:234::1';
+const id1='ip-target:203.0.113.112';
+const id6='ipv6:2001:db8:123::6';
 const scope='sgt:'+'a'.repeat(64);
-const old='203.0.113.114',current='203.0.113.110';
+const old='203.0.113.112',current='203.0.113.108';
 let now=1760730000000;
 const eventId='IP_CHANGE:'+scope+':'+id6+':999:'+current;
 const beforeRoot={version:3,scopes:{
@@ -57,7 +57,7 @@ const record=(instanceId,ip,label)=>({instanceId,ip,label,pageOpenedAt:now,chang
  now+=2000;
  const real=await monitor.dispatch({type:'monitor:observe',scope,records:[
    record(id1,old,'#1 示例组一'),
-   {...record(id6,'203.0.113.111','#6 示例实例六'),changedHere:true}
+   {...record(id6,'203.0.113.109','#6 示例实例六'),changedHere:true}
  ]});
  assert.equal(real.newAlerts.filter(e=>e.kind==='IP_CHANGE').length,1);
  assert.equal(real.newAlerts.find(e=>e.kind==='IP_CHANGE').oldIp,current);

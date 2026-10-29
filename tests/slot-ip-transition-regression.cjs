@@ -15,22 +15,22 @@ const msg=(slot,ip,id,opts={})=>({
 });
 const rec=(id,ip,slot)=>({instanceId:id,ip,label:'#'+slot+' 示例组一',
  pageOpenedAt:now,changedHere:false});
-const A='ipv6:2001:db8:bb4:fc00:36b8:c292:306c:ca8b';
-const B='ipv6:2001:db8:123::23';
-const C='ipv6:2001:db8:123::22';
-const old='203.0.113.109',fresh='203.0.113.105',third='203.0.113.106';
+const A='ipv6:2001:db8:123::16';
+const B='ipv6:2001:db8:123::63';
+const C='ipv6:2001:db8:123::62';
+const old='203.0.113.107',fresh='203.0.113.103',third='203.0.113.104';
 const one=()=>db.wallcheck_scoped_monitor_v3.scopes[scope];
 const pending=(kind)=>one().alerts.filter(e=>e.kind===kind&&!e.acknowledged);
 (async()=>{
   // Initial capture of #1 and #2 must never manufacture a switch.
-  await account([msg(1,old,A),msg(2,'203.0.113.112','ipv6:2001:db8:a15:2c00:b3cc:a8e:5dfc:299a')]);
+  await account([msg(1,old,A),msg(2,'203.0.113.110','ipv6:2001:db8:123::17')]);
   await observe([rec(A,old,1)]);
   assert.equal(pending('SLOT_IP_CHANGE').length,0);
   now+=10000;
   // Both IPv4 AND IPv6 changed, so the old machine-ID-based IP_CHANGE path
   // can only create a second baseline; monitor must still alert #1 slot.
   let r=await account([msg(1,fresh,B,{opened:now-5000,changed:true}),
-    msg(2,'203.0.113.112','ipv6:2001:db8:a15:2c00:b3cc:a8e:5dfc:299a')]);
+    msg(2,'203.0.113.110','ipv6:2001:db8:123::17')]);
   await observe([rec(B,fresh,1)]);
   assert.equal(pending('IP_CHANGE').length,0,'replacement is not same-machine change');
   assert.equal(pending('SLOT_IP_CHANGE').length,1,
@@ -61,7 +61,7 @@ const pending=(kind)=>one().alerts.filter(e=>e.kind===kind&&!e.acknowledged);
   assert.equal(one().instances[B].ip,fresh,'replacement baseline preserved');
   // New incident after acknowledged group not suppressed.
   now+=10000;
-  r=await account([msg(1,'203.0.113.107','ipv6:2001:db8:123::24',
+  r=await account([msg(1,'203.0.113.105','ipv6:2001:db8:123::64',
    {changed:true,opened:now-1000})]);
   assert.equal(r.newAlerts.filter(e=>e.kind==='SLOT_IP_CHANGE').length,1);
   // Different scope with same #1 does not share state.

@@ -3,7 +3,7 @@ import requests, websocket
 sys.stdout.reconfigure(encoding='utf-8',errors='backslashreplace')
 
 REPO=pathlib.Path(__file__).resolve().parent.parent
-BROWSER=pathlib.Path(os.environ.get('WALLCHECK_THORIUM_BIN', 'LOCAL_PATH'))
+BROWSER=pathlib.Path(os.environ.get('WALLCHECK_THORIUM_BIN', 'thorium'))
 PROFILE=pathlib.Path(tempfile.mkdtemp(prefix='wallcheck-smoke-'))
 EXT=REPO/'browser-extension'
 assert BROWSER.is_file() and (EXT/'manifest.json').is_file()
@@ -31,9 +31,9 @@ FAKE_HTML='''<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <style>body{font:16px Arial;margin:30px}.card{padding:22px;border:1px solid gray;margin:12px;display:inline-block;vertical-align:top}</style>
 <body>
 <div class="card" id="card1"><div class="head">#1 ✎ 示例组一 29天 剩余25天</div>
-<div id="ip1">IP 127.0.0.1</div><div>IPv6 2001:db8:123::2</div></div>
+<div id="ip1">IP 127.0.0.1</div><div>IPv6 2001:db8:100::2</div></div>
 <div class="card" id="card2"><div class="head">#2 🔗 示例账号二 24小时 剩余25天</div>
-<div id="ip2">IP 127.0.0.2</div><div>IPv6 2001:db8:123::3</div></div>
+<div id="ip2">IP 127.0.0.2</div><div>IPv6 2001:db8:100::5</div></div>
 </body></html>'''
 fake=base64.b64encode(FAKE_HTML.encode('utf-8')).decode('ascii')
 
@@ -108,8 +108,8 @@ try:
     cdp('Fetch.enable',{'patterns':[{'urlPattern':'https://aws.sb/*',
       'resourceType':'Document','requestStage':'Request'}]})
     cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-manual-smoke'})
-    poll('WallCheck 1.9.9 panel',lambda:ev(
-      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.9')"))
+    poll('WallCheck 2.0.2 panel',lambda:ev(
+      "document.getElementById('wallcheck-panel')?.textContent?.includes('2.0.2')"))
     ev("document.getElementById('wallcheck-manual-open').click()")
     page=poll('manual monitor option tab',lambda:next((x for x in
       requests.get(f'http://127.0.0.1:{port}/json',timeout=1).json()

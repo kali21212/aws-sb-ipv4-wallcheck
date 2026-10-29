@@ -18,7 +18,7 @@ async function check(id,verdict,at,error=null){
     when:at,...(error?{error}:{result:verdict})}]});
 }
 (async()=>{
- const id=(await run('add',{ip:'203.0.113.115',mode:'either',label:'实验',intervalMinutes:5})).addedId;
+ const id=(await run('add',{ip:'203.0.113.113',mode:'either',label:'实验',intervalMinutes:5})).addedId;
  assert.equal((await get(id)).downSince,0);
  const first=1760683860000;
  let v=await check(id,result('NO_REPLY','TIMEOUT'),first);
@@ -57,13 +57,13 @@ async function check(id,verdict,at,error=null){
  assert.equal(v.events[0].kind,'DOWN');
  assert.equal((await get(id)).downSince,again,'future outage is new');
  assert.equal((await get(id)).recoveredAt,0);
- await run('update',{id,ip:'203.0.113.116',label:'实验2',mode:'tcp22',intervalMinutes:1});
+ await run('update',{id,ip:'203.0.113.114',label:'实验2',mode:'tcp22',intervalMinutes:1});
  assert.equal((await get(id)).downSince,0,'IP edit starts new episode');
  assert.equal((await get(id)).lastOutageSince,0);
  assert.equal((await get(id)).recoveredAt,0);
  // Stale response for previous IP cannot resurrect old red timestamp.
  const previous=(await get(id)).generation-1;
- await run('apply',{results:[{id,ip:'203.0.113.115',generation:previous,
+ await run('apply',{results:[{id,ip:'203.0.113.113',generation:previous,
    when:again+60000,result:result('NO_REPLY','TIMEOUT')}]});
  assert.equal((await get(id)).downSince,0);
  // Migration test: a pre-1.9.2 live down target only has DOWN event time.

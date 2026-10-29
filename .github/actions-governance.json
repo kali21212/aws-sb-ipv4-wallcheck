@@ -1,0 +1,17 @@
+{
+  "schema": "charlie-actions-governance/v3",
+  "repository": "kali21212/aws-sb-ipv4-wallcheck",
+  "governance_carrier": ".github/workflows/pr-source-validation.yml",
+  "workflows": [
+    {
+      "path": ".github/workflows/pr-source-validation.yml",
+      "lifecycle": "pr-fast",
+      "scope_policy": "repo-wide-required",
+      "cancellation": "pr-supersede",
+      "artifact_class": "none",
+      "repository_writeback": {
+        "mode": "none"
+      }
+    }
+  ]
+}

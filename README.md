@@ -7,10 +7,77 @@ It combines a Chromium extension with a localhost probe to:
 - automatically detect IPv4 addresses on `aws.sb/#/ec2-instances`;
 - never probe IPv6 (it may identify the instance when EC2 ID is not visible);
 - test ICMP reachability plus TCP port 22 only;
-- automatically recheck every 10 minutes;
+- automatically recheck every 5 minutes by default, configurable from 1 to 60 minutes;
 - detect IPv4 changes only within the same sgt account scope and stable instance identity;
 - retain unacknowledged IPv4 change history until manually acknowledged (no flashing) and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
+
+## Current version and release numbering
+
+The current browser extension is **2.0.2**. Keep version identifiers as
+strings and compare their dot-separated integer components. For future
+WallCheck releases, use single-digit patch values: 2.0.1 through 2.0.9,
+then 2.1.1. This is a project release-label convention; this renumbering
+does not change stored data or the local probe protocol. See CONTRIBUTING.md.
+
+## Observable automatic checks and bounded recovery (v2.0.2)
+
+- The panel separates **上次有效实测** (the most recent valid measurement),
+  **最近尝试** (the latest attempt) and **下次自动检查** (the actual Chromium
+  alarm time). A valid measurement may report a red Ping/TCP22 failure;
+  it does not mean every target is reachable. Cached data keeps its real
+  timestamp, and delayed or unavailable scheduling is shown explicitly.
+- Every scan checks the executing worker version and protocol. An invalidated
+  extension context or an old worker produces visible reload-and-refresh
+  instructions and stops the unproductive retry loop. Extension messages
+  and network requests have bounded timeouts.
+- Temporary communication failures retry after 15, 30 and 60 seconds, then
+  wait for the next scheduled cycle or a manual retry. A batch-level timeout,
+  lost message channel or unavailable probe no longer fans out into repeated
+  requests for every IP. Valid partial results remain usable.
+- Storage or alert-sync failures are reported by their stage and retain the
+  actual completed measurements. Dynamic card label/countdown changes do
+  not invalidate a probe when its account, instance and IP are unchanged.
+- A collapsed **检测记录** section reads the latest local diagnostic entries
+  on demand: actual alarm firing, page delivery, probe start/finish and
+  failure categories. A bounded 100-entry log stores timestamps, counts,
+  duration and fixed categories, never raw page URLs, IPs, sgt or account text.
+- The compact panel groups status, times, settings and actions, with controls
+  isolated from website CSS and responsive warning-panel placement.
+- The formal probe remains 127.0.0.1:17654. Port 17655 is not a runtime
+  dependency. Existing history, manual targets, saved 1–60-minute interval,
+  default 5-minute schedule and strict Ping OR TCP22 alert policy remain.
+
+Run `node tests/extension-regression.cjs` for the integration regressions.
+`python tests/thorium-smoke.py` checks real Chromium behavior and geometry;
+`python tests/natural-schedule-browser-smoke.py --expected-version 2.0.2`
+observes two natural default 5-minute alarm cycles in an isolated profile.
+The natural-cycle test requires at least ten minutes and never manually
+fires an alarm or changes the saved interval.
+
+## Async page isolation and concurrent result storage (v2.0.1)
+
+- Each scan captures its account scope, route, generation, IPv4/instance
+  identity and account-card state. After asynchronous work it checks that
+  the snapshot is still current. Results and errors arriving after navigation,
+  account switching or IP replacement cannot update the new page, its
+  measurement time or its reachability conditions. A current-page recheck
+  follows automatically.
+- Last-valid probe results now have one background writer. Concurrent tabs
+  submit scoped deltas; one completed scan can no longer erase another
+  account's results. Existing stored results remain readable.
+- Clearing a scope invalidates its in-flight cache writes using a persisted
+  generation. Other scopes' results and alerts, and the saved interval stay intact.
+- Default 5-minute and saved 1–60-minute intervals, strict Ping OR TCP22
+  severe alerts, the local agent and Guardian are unchanged.
+- Regression tests execute the real worker, monitor and scanning code with
+  controlled delayed replies: cross-account navigation, simultaneous tabs,
+  same-account IP replacement, leaving EC2, and late transport errors.
+  Separate cache tests cover clear-during-probe, restart, ordering, legacy
+  data and storage failures. Run node tests/extension-regression.cjs.
+
+The sections below describe earlier releases. The current AWS.SB interval
+is the saved 1–60-minute setting above, with a 5-minute default.
 
 ## User-configurable automatic check interval (v1.9.9)
 
@@ -127,9 +194,9 @@ python tests/thorium-smoke.py real Chromium geometry assertions
 
 ## Same sgt, same monitored #n, replaced EC2 instance alerts (v1.9.6)
 
-The 2026-10-23 production screenshots exposed a 1.9.5 false negative:
-#1 displayed IPv4 203.0.113.109, then 203.0.113.105. Its IPv6 also
-changed (2001:db8:bb4:... -> 2001:db8:bf00:...). Since the original
+An EC2 instance-replacement regression can expose a false negative:
+#1 displayed IPv4 203.0.113.107, then 203.0.113.180. Its IPv6 also
+changed (2001:db8:100::3... -> 2001:db8:100::4...). Since the original
 machine-identity IP_CHANGE monitor is keyed by stable IPv6/EC2 ID, the
 replacement was inserted as a different instance, leaving the old IPv4 in
 "historical targets" but emitting NO actual IP-change notification.

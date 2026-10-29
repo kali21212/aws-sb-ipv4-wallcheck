@@ -18,28 +18,28 @@ const monitor=context.createWallCheckMonitor({
  write:async(key,value)=>{await delay(1);db[key]=structuredClone(value);},
  clock:()=>now
 });
-const rec=(ip,id='ipv6:2001:db8:123::1a',label='#1 备用',pageOpenedAt=990000,changedHere=false)=>
+const rec=(ip,id='ipv6:2001:db8:123::10',label='#1 备用',pageOpenedAt=990000,changedHere=false)=>
  ({instanceId:id,ip,label,pageOpenedAt,changedHere});
 const observe=(scope,...records)=>monitor.dispatch({type:'monitor:observe',scope,records});
 const ids=result=>result.snapshot.alerts.filter(e=>e.kind==='IP_CHANGE'&&!e.acknowledged);
 (async()=>{
  // Two different sgt pages both have #1: absolutely independent baselines.
- let a=await observe(scopeA,rec('203.0.113.103'));
- let b=await observe(scopeB,rec('203.0.113.108','ipv6:2001:db8:123::25','#1 示例组一'));
+ let a=await observe(scopeA,rec('203.0.113.101'));
+ let b=await observe(scopeB,rec('203.0.113.106','ipv6:2001:db8:123::65','#1 示例组一'));
  assert.equal(ids(a).length,0);assert.equal(ids(b).length,0);
- assert.equal(a.snapshot.currentIPs[0],'203.0.113.103');
- assert.equal(b.snapshot.currentIPs[0],'203.0.113.108');
+ assert.equal(a.snapshot.currentIPs[0],'203.0.113.101');
+ assert.equal(b.snapshot.currentIPs[0],'203.0.113.106');
  now+=3000;
- a=await observe(scopeA,rec('203.0.113.103'));
- b=await observe(scopeB,rec('203.0.113.108','ipv6:2001:db8:123::25','#1 示例组一'));
+ a=await observe(scopeA,rec('203.0.113.101'));
+ b=await observe(scopeB,rec('203.0.113.106','ipv6:2001:db8:123::65','#1 示例组一'));
  assert.equal(ids(a).length,0);assert.equal(ids(b).length,0);
  // Simultaneous identical-sgt tabs must have serialized writes, not last-write-wins.
  now+=2000;
- const shared='ec2:i-00000000000000010';
+ const shared='ec2:i-00000000000000001';
  const first=await observe(scopeA,rec('192.0.2.1',shared,'#2 广州',now-50));
  const p=await Promise.all([
    observe(scopeA,rec('192.0.2.2',shared,'#2 广州',now+200,true)),
-   observe(scopeB,rec('192.0.2.20','ipv6:2001:db8:123::1c','#2 示例账号二',now,true))
+   observe(scopeB,rec('192.0.2.20','ipv6:2001:db8:123::12','#2 示例账号二',now,true))
  ]);
  assert.equal(ids(p[0]).length,1);
  assert.equal(ids(p[1]).length,0);
@@ -77,20 +77,20 @@ const ids=result=>result.snapshot.alerts.filter(e=>e.kind==='IP_CHANGE'&&!e.ackn
  assert.equal(finalA.snapshot.alerts.filter(e=>e.kind==='IP_CHANGE').length,0, 'ack must delete persisted change detail rows');
  assert.equal(finalA.snapshot.instances[shared].ip,'192.0.2.3', 'ack must retain latest IP baseline');
  // Acknowledge in A must not alter the current IP or state for B.
- assert.equal(finalB.snapshot.instances['ipv6:2001:db8:123::25'].ip,'203.0.113.108');
+ assert.equal(finalB.snapshot.instances['ipv6:2001:db8:123::65'].ip,'203.0.113.106');
  // Clear A atomically + re-baseline, never alters B. It also clears saved alerts.
  const clear=await monitor.dispatch({type:'monitor:clear',scope:scopeA,
    records:[rec('192.0.2.3',shared,'#2 广州')]});
  assert.equal(clear.snapshot.alerts.filter(e=>e.kind==='IP_CHANGE').length,0);
  const afterClear=await observe(scopeA,rec('192.0.2.3',shared,'#2 广州',990001,false));
  assert.equal(ids(afterClear).length,0);
- assert.equal((await monitor.dispatch({type:'monitor:get',scope:scopeB})).snapshot.instances['ipv6:2001:db8:123::25'].ip,'203.0.113.108');
+ assert.equal((await monitor.dispatch({type:'monitor:get',scope:scopeB})).snapshot.instances['ipv6:2001:db8:123::65'].ip,'203.0.113.106');
  // Unstable identity cannot infer a change (even when display ordinal reused).
  const unstable=await observe(scopeA,rec('192.0.2.88','ip-target:192.0.2.88','#1 备用',now+100,true));
  assert.equal(ids(unstable).length,0);
  // Simulate being away for days. Keep every unacknowledged change (not just
  // A->B and B->C) and remove the entire instance group with one action.
- const backlogId='ec2:i-00000000000000012111111111';
+ const backlogId='ec2:i-00000000000000004';
  now+=3000;
  await observe(scopeA,rec('10.20.0.1',backlogId,'#3 长期监控',now+100,true));
  for(let i=1;i<=610;i++){
@@ -121,7 +121,7 @@ const ids=result=>result.snapshot.alerts.filter(e=>e.kind==='IP_CHANGE'&&!e.ackn
  assert.equal(ids(getAfterAck).filter(e=>e.instanceId===backlogId).length,1);
  // Same action cannot delete another signed account's data.
  assert.equal((await monitor.dispatch({type:'monitor:get',scope:scopeB}))
-   .snapshot.instances['ipv6:2001:db8:123::25'].ip,'203.0.113.108');
+   .snapshot.instances['ipv6:2001:db8:123::65'].ip,'203.0.113.106');
  // One-time migration: already-acknowledged 1.8.0 IP details are pruned
  // on first 1.8.1 read, while still-pending entries remain untouched.
  db[KEY].scopes[scopeA].alerts.push({
