@@ -12,6 +12,40 @@ It combines a Chromium extension with a localhost probe to:
 - retain unacknowledged IPv4 change history until manually acknowledged (no flashing) and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
 
+## User-configurable automatic check interval (v1.9.9)
+
+- User-requested default AWS.SB page scan interval: **5 minutes**.
+  The WallCheck status panel now shows "自动检测间隔 [5] 分钟 保存".
+  Any integer 1–60 minutes can be entered; clicking 保存 or pressing
+  Enter updates the running schedule immediately. Values outside
+  1..60 or fractional/blank values are rejected without a network scan.
+- A single Chromium background service worker owns one
+  wallcheck-auto-recheck alarm. On install/startup/upgrade, a former
+  fixed 3-/10-minute alarm migrates to the 5-minute default when no
+  prior user preference exists. Once saved, the interval is stored
+  in chrome.storage.local (wallcheck_auto_interval_minutes_v1) and
+  preserved on page reload and browser restart.
+- All AWS.SB sgt scopes and multiple tabs of the same browser profile
+  share one interval. Two tabs changing the interval are serialized
+  through a worker queue to avoid duplicate alarms; updates are
+  reflected in every open AWS.SB panel via storage.onChanged.
+- Every scheduled scan forces a fresh ICMP Ping + TCP22 network probe.
+  DOM-only repaint cache is 1 minute, independent of the saved 1–60
+  minute period; cached displays are labeled, not represented as new
+  measurements. "上次实测 HH:mm:ss" updates only after real probes.
+- Ping OR TCP22 failure still creates immediate RED alert at the
+  moment of its detection. Existing IP/account alerts, acknowledgement,
+  history, independent manual-IP 1/5/10-minute settings, Guardian,
+  local agent and Windows notification registration are unchanged.
+- No extra browser permissions, account writes, passwords, data
+  exfiltration, cloud polling, extra ports or Windows scheduled tasks.
+  A sleeping/closed browser or PC cannot run browser-page monitoring.
+- Tests: tests/three-minute-recheck-regression.cjs (historical filename,
+  now tests configurable 1..60, default 5, 3/10 migration, persistence,
+  two-tab serialization and invalid inputs), plus complete old suite
+  and isolated Thorium tests/thorium-smoke.py (7-minute save,
+  rejected 61, persisted through real page reload, reset to 5).
+
 ## 3-minute recurring ICMP/TCP22 checks and accurate last-check time (v1.9.8)
 
 - AWS.SB Chromium alarm cadence changed 10 -> 3 minutes. On upgrade,

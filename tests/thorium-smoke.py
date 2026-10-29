@@ -107,10 +107,31 @@ try:
     cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-scope-A-123'})
     result=poll('extension panel injection',lambda:ev("document.getElementById('wallcheck-panel')?.textContent || ''"))
     print('PANEL_PRESENT',repr(result[:150]),flush=True)
-    if '1.9.8' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
+    if '1.9.9' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
     text=poll('first 2 IP scanned',lambda:ev("document.getElementById('wallcheck-status')?.textContent?.includes('本机探针') && document.getElementById('wallcheck-count')?.textContent || ''"),seconds=18)
     print('FIRST_SCAN',repr(text),flush=True)
-    assert ev("document.getElementById('wallcheck-panel').textContent.includes('每 3 分钟复检')"),'THREE_MIN_LABEL_MISSING'
+    poll('default 5min loaded from worker',lambda:ev("""(()=>{
+      const label=document.getElementById('wallcheck-interval-label')?.textContent||'';
+      const status=document.getElementById('wallcheck-interval-feedback')?.textContent||'';
+      return label.includes('每 5 分钟') && status.includes('当前已保存');
+    })()"""))
+    ev("""(()=>{
+      document.getElementById('wallcheck-auto-minutes').value='7';
+      document.getElementById('wallcheck-interval-save').click(); return true;
+    })()""")
+    poll('custom 7min saved and effective',lambda:ev("""(()=>{
+      const a=document.getElementById('wallcheck-interval-feedback')?.textContent||'';
+      const b=document.getElementById('wallcheck-interval-label')?.textContent||'';
+      return a.includes('已生效：每 7 分钟') && b.includes('每 7 分钟');
+    })()"""))
+    print('CUSTOM_INTERVAL_7_MINUTES_PERSISTED_PASS',flush=True)
+    ev("""(()=>{
+      document.getElementById('wallcheck-auto-minutes').value='61';
+      document.getElementById('wallcheck-interval-save').click();return true;
+    })()""")
+    poll('invalid 61min rejected in UI',lambda:ev(
+      "document.getElementById('wallcheck-interval-feedback')?.textContent?.includes('请输入 1～60')"))
+    print('INTERVAL_SAVE_VALIDATE_PASS',flush=True)
     def scan_label_time():
         return ev("document.getElementById('wallcheck-status')?.textContent.match(/上次实测\\s*(\\d{1,2}:\\d{2}:\\d{2})/)?.[1] || null")
     original_time=scan_label_time()
@@ -215,7 +236,7 @@ try:
     # reload the real Chromium tab, then hide the same historic IPv4 again.
     ev("location.reload()")
     poll('extension panel after page reload',lambda:ev(
-      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.8')"))
+      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.9')"))
     poll('reloaded original list verified',lambda:ev(
       "document.getElementById('wallcheck-status')?.textContent?.includes('本机探针')"))
     ev("window.__wcCard2=document.getElementById('card2');window.__wcCard2.remove()")
@@ -225,6 +246,19 @@ try:
         !document.getElementById('wallcheck-status')?.textContent?.includes('历史目标');
     })()"""))
     print('ACTUAL_PAGE_RELOAD_ACK_PERSISTS_PASS',flush=True)
+    poll('saved custom 7min survives actual page reload',lambda:ev("""(()=>{
+      const a=document.getElementById('wallcheck-interval-label')?.textContent||'';
+      const b=document.getElementById('wallcheck-auto-minutes')?.value;
+      return a.includes('每 7 分钟') && b==='7';
+    })()"""))
+    print('CUSTOM_INTERVAL_SURVIVES_ACTUAL_F5_PASS',flush=True)
+    ev("""(()=>{
+      document.getElementById('wallcheck-auto-minutes').value='5';
+      document.getElementById('wallcheck-interval-save').click();return true;
+    })()""")
+    poll('return to default five minutes',lambda:ev(
+      "document.getElementById('wallcheck-interval-feedback')?.textContent?.includes('已生效：每 5 分钟')"))
+    print('INTERVAL_SAVE_VALIDATE_AND_RESET_PASS',flush=True)
     # A genuine new hidden target-set must be noticed again, even if the
     # previous one was acknowledged. Existing alert histories are preserved.
     ev("document.body.appendChild(window.__wcCard2)")

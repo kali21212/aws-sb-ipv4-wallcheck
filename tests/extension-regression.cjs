@@ -6,7 +6,7 @@ const cp=require('node:child_process');
 const dir=path.resolve(__dirname,'..','browser-extension');
 const src=fs.readFileSync(path.join(dir,'content.js'),'utf8');
 const manifest=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json'),'utf8'));
-assert.equal(manifest.version,'1.9.8');
+assert.equal(manifest.version,'1.9.9');
 assert.deepEqual(manifest.permissions.slice().sort(),['alarms','notifications','storage']);
 assert(src.includes("const ONLY_PORTS = [22]"));
 assert(!src.includes('aws-sb-slot-')); // never use display ordinals as identity

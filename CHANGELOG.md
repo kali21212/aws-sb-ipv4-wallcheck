@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.9.9 - user-adjustable AWS.SB probe interval, default 5 minutes (2026-10-29)
+
+- Replace fixed 3-minute alarm with one persisted browser-profile
+  configurable interval, default 5, accepting integer 1..60.
+- Edit in the WallCheck status panel and press 保存; immediately
+  rearm the single alarm without restarting Windows or clearing IPs.
+- Upgrade fixed 3/10-minute alarms to 5 when no user setting exists;
+  preserve explicit saved intervals on browser restart/page reload.
+- Serialize schedule writes across tabs; sync the displayed setting
+  across active AWS.SB pages using chrome.storage.onChanged.
+- Keep cached timestamps honest, shorten DOM repaint cache to 1min,
+  and preserve strict Ping OR TCP22 severe alerts, manual-IP and Guardian.
+- Unit and actual isolated-Thorium setting/reload/validation tests.
+
 ## 1.9.8 - 3-minute auto recheck and explicit measured-at time (2026-10-29)
 
 - Change recurring AWS.SB browser alarm from 10 to 3 minutes and
