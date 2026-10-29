@@ -19,7 +19,7 @@ const faults=x=>x.snapshot.alerts.filter(e=>e.kind==='AGENT_OFFLINE'||e.kind==='
  const recovered=await invoke(scopeB,'monitor:agent',{ok:true});
  assert(faults(recovered)[0].resolvedAt,'fault must be marked resolved');
  // Add pending IP-change event and an open independent port failure.
- const machine='ec2:i-12345678';
+ const machine='ec2:i-00000000000000005';
  await invoke(scopeA,'monitor:observe',{records:[{instanceId:machine,ip:'192.0.2.1',label:'#1',pageOpenedAt:time,changedHere:false}]});
  const change=await invoke(scopeA,'monitor:observe',{records:[{instanceId:machine,ip:'192.0.2.2',label:'#1',pageOpenedAt:time+100,changedHere:true}]});
  assert(change.snapshot.alerts.some(e=>e.kind==='IP_CHANGE'));

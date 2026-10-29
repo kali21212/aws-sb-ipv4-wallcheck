@@ -1,25 +1,32 @@
-AWS.SB IPv4 WallCheck Portable V1.6.1 浏览器扩展
+AWS.SB IPv4 WallCheck Portable 2.0.2 浏览器扩展
 
-支持：
-- Thorium / Chrome：chrome://extensions/
-- Edge：edge://extensions/
-- Brave：brave://extensions/
+支持 Thorium、Chrome、Edge、Brave 等 Chromium 系浏览器。
+Thorium 可打开 thorium://extensions；Chrome 使用 chrome://extensions。
 
-安装：
-1. 打开扩展管理页面
-2. 开启“开发者模式”
-3. 点“加载已解压的扩展程序”
-4. 选择本文件所在的 browser-extension 文件夹
-5. 打开/刷新 aws.sb EC2 实例页面
+首次安装：
+1. 将便携包完整解压到固定目录。
+2. 在便携包根目录运行 01-Start-and-Register-Notifications.cmd。
+   如果使用源码目录，则运行“启动 WallCheck.cmd”。
+3. 打开扩展管理页，开启“开发者模式”。
+4. 点击“加载已解压的扩展程序”，选择本文件所在的 browser-extension 文件夹。
+5. 打开或刷新自己的 AWS.SB EC2 实例页面。
+6. 主面板及手动 IPv4 监控页应显示 2.0.2。
 
-要求：
-先运行压缩包根目录的“启动 WallCheck.cmd”。
+升级现有安装：
+更新原目录文件后，在扩展管理页点击“重新加载”，再刷新 AWS.SB 页面。
+保持原扩展路径和浏览器配置，不要先卸载扩展或清除本地数据，以保留监控历史。
 
-V1.6.1 为纯本机版：
-- 只连接 http://127.0.0.1:17654
-- 无海外基线
-- 无海外基线端口
-- 无 SSH 隧道
-- IPv6 完全忽略
-- 每 10 分钟自动复检
-- 支持 EC2 实例 IPv4 变更提示
+运行说明：
+- 扩展 2.0.2 兼容包内 1.6.1 本机探针。
+- 仅连接本机探针 http://127.0.0.1:17654，不需要海外基线或 SSH 隧道。
+- 只探测 IPv4 的 ICMP Ping 与 TCP22；IPv6 文字可辅助识别实例，不作为探测目标。
+- AWS.SB 默认每 5 分钟检测；面板可保存 1～60 的整数分钟，已有设置继续使用。
+- 面板分别显示上次有效实测、本轮开始及真实下次计划；展开“检测记录”可排查自动检测。
+- 看到扩展版本/上下文提示时，先重新加载扩展，再刷新 AWS.SB 页面。
+- 手动 IPv4 监控的每个目标可独立设置 1/5/10 分钟。
+- Ping 或 TCP22 任一实测失败为红色严重告警；两项成功为绿色。
+- 实例换 IP、账号故障与未确认事件按账号范围保留。
+- 浏览器和本机探针需要运行；电脑休眠或浏览器关闭会影响检测。
+
+更完整的功能、通知与维护说明见便携包根目录“操作说明-先看这个.txt”，
+或源码目录 docs/操作步骤.txt。

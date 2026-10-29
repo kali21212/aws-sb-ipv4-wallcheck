@@ -4,8 +4,8 @@ const src=fs.readFileSync(path.resolve(__dirname,'../browser-extension/content.j
 const node=(value,parent=null)=>({innerText:value,textContent:value,parentElement:parent,
   children:[],closest:()=>null,querySelector:()=>null,querySelectorAll:()=>[]});
 const body=node('full root');
-const grid=node('#1 待定组\nIP 95.40.2.172\n#2 老用户\n账号无效\n自动替补',body);
-const one=node('#1 待定组\nIP 95.40.2.172\n型号 c5n.large',grid);
+const grid=node('#1 待定组\nIP 203.0.113.115\n#2 老用户\n账号无效\n自动替补',body);
+const one=node('#1 待定组\nIP 203.0.113.115\n型号 c5n.large',grid);
 const two=node('#2 老用户\n账号无效\n自动替补\n尝试账号 private@example.test\n型号 c5n.large',grid);
 const head1=node('#1 待定组',one);
 const head2=node('#2 老用户',two);
@@ -41,11 +41,11 @@ const inProgress=f.accountSignalSignature(result);
 two.innerText=two.textContent='#2 老用户\n自动替补\n尝试账号 third@example.test\n型号 c5n.large';
 assert.equal(f.accountSignalSignature(f.collectAccountCards()),inProgress,
   'new email inside retry UI must not trigger extra scans');
-two.innerText=two.textContent='#2 老用户\n设置新实例\nIP 18.162.225.248\n型号 c5n.large';
+two.innerText=two.textContent='#2 老用户\n设置新实例\nIP 203.0.113.108\n型号 c5n.large';
 result=f.collectAccountCards();
-assert.equal(result.find(r=>r.slot==='2').ip,'18.162.225.248');
+assert.equal(result.find(r=>r.slot==='2').ip,'203.0.113.108');
 assert.equal(result.find(r=>r.slot==='2').replacing,false);
 assert.equal(result.find(r=>r.slot==='2').invalid,false);
-assert.equal(result.find(r=>r.slot==='1').ip,'95.40.2.172');
+assert.equal(result.find(r=>r.slot==='1').ip,'203.0.113.115');
 assert.notEqual(f.accountSignalSignature(result),inProgress);
 console.log('ACCOUNT_DOM_REGRESSION_PASS: card-local invalid/replenishing/healthy signals, no neighboring contamination, email-agnostic signature, zero private text leakage');

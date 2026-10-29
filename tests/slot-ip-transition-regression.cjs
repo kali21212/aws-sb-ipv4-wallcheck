@@ -15,22 +15,22 @@ const msg=(slot,ip,id,opts={})=>({
 });
 const rec=(id,ip,slot)=>({instanceId:id,ip,label:'#'+slot+' 待定组',
  pageOpenedAt:now,changedHere:false});
-const A='ipv6:2406:da1e:bb4:fc00:36b8:c292:306c:ca8b';
-const B='ipv6:2406:da1e:bf00:331c:653e:760f:9bd3';
-const C='ipv6:2406:da1e:befe:2222:3333:4444:5555';
-const old='16.163.123.74',fresh='16.162.93.86',third='16.162.93.87';
+const A='ipv6:2001:db8:201::1';
+const B='ipv6:2001:db8:100::13';
+const C='ipv6:2001:db8:100::12';
+const old='203.0.113.107',fresh='203.0.113.103',third='203.0.113.104';
 const one=()=>db.wallcheck_scoped_monitor_v3.scopes[scope];
 const pending=(kind)=>one().alerts.filter(e=>e.kind===kind&&!e.acknowledged);
 (async()=>{
   // Initial capture of #1 and #2 must never manufacture a switch.
-  await account([msg(1,old,A),msg(2,'43.199.205.224','ipv6:2406:da1e:a15:2c00:b3cc:a8e:5dfc:299a')]);
+  await account([msg(1,old,A),msg(2,'203.0.113.110','ipv6:2001:db8:201::2')]);
   await observe([rec(A,old,1)]);
   assert.equal(pending('SLOT_IP_CHANGE').length,0);
   now+=10000;
   // Both IPv4 AND IPv6 changed, so the old machine-ID-based IP_CHANGE path
   // can only create a second baseline; monitor must still alert #1 slot.
   let r=await account([msg(1,fresh,B,{opened:now-5000,changed:true}),
-    msg(2,'43.199.205.224','ipv6:2406:da1e:a15:2c00:b3cc:a8e:5dfc:299a')]);
+    msg(2,'203.0.113.110','ipv6:2001:db8:201::2')]);
   await observe([rec(B,fresh,1)]);
   assert.equal(pending('IP_CHANGE').length,0,'replacement is not same-machine change');
   assert.equal(pending('SLOT_IP_CHANGE').length,1,
@@ -61,7 +61,7 @@ const pending=(kind)=>one().alerts.filter(e=>e.kind===kind&&!e.acknowledged);
   assert.equal(one().instances[B].ip,fresh,'replacement baseline preserved');
   // New incident after acknowledged group not suppressed.
   now+=10000;
-  r=await account([msg(1,'16.162.93.88','ipv6:2406:da1e:bfaa:0:1:2:3',
+  r=await account([msg(1,'203.0.113.105','ipv6:2001:db8:100::14',
    {changed:true,opened:now-1000})]);
   assert.equal(r.newAlerts.filter(e=>e.kind==='SLOT_IP_CHANGE').length,1);
   // Different scope with same #1 does not share state.

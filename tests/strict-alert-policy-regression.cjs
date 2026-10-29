@@ -61,7 +61,7 @@ const monitor=core.createWallCheckMonitor({
   clock:()=>now
 });
 const scope='sgt:'+'a'.repeat(64);
-const instanceId='ipv6:2406:da1e:bbbb:cccc::1';
+const instanceId='ipv6:2001:db8:100::11';
 const observe=()=>monitor.dispatch({scope,type:'monitor:observe',records:[{
   instanceId,ip,label:'#1 待定组',pageOpenedAt:now-1000,changedHere:false
 }]});

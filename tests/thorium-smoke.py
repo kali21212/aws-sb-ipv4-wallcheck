@@ -3,7 +3,7 @@ import requests, websocket
 sys.stdout.reconfigure(encoding='utf-8',errors='backslashreplace')
 
 REPO=pathlib.Path(__file__).resolve().parent.parent
-BROWSER=pathlib.Path(os.environ.get('WALLCHECK_THORIUM_BIN', 'E:/2浏览器/thorium浏览器新版/BIN/thorium.exe'))
+BROWSER=pathlib.Path(os.environ.get('WALLCHECK_THORIUM_BIN', 'thorium'))
 PROFILE=pathlib.Path(tempfile.mkdtemp(prefix='wallcheck-smoke-'))
 EXT=REPO/'browser-extension'
 assert BROWSER.is_file() and (EXT/'manifest.json').is_file()
@@ -31,9 +31,9 @@ FAKE_HTML='''<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <style>body{font:16px Arial;margin:30px}.card{padding:22px;border:1px solid gray;margin:12px;display:inline-block;vertical-align:top}</style>
 <body>
 <div class="card" id="card1"><div class="head">#1 ✎ 待定组 29天 剩余25天</div>
-<div id="ip1">IP 127.0.0.1</div><div>IPv6 2406:da1e:aaaa:bbbb::1</div></div>
+<div id="ip1">IP 127.0.0.1</div><div>IPv6 2001:db8:100::2</div></div>
 <div class="card" id="card2"><div class="head">#2 🔗 老用户 24小时 剩余25天</div>
-<div id="ip2">IP 127.0.0.2</div><div>IPv6 2406:da1e:cccc:dddd::2</div></div>
+<div id="ip2">IP 127.0.0.2</div><div>IPv6 2001:db8:100::5</div></div>
 </body></html>'''
 fake=base64.b64encode(FAKE_HTML.encode('utf-8')).decode('ascii')
 
@@ -107,13 +107,13 @@ try:
     cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-scope-A-123'})
     result=poll('extension panel injection',lambda:ev("document.getElementById('wallcheck-panel')?.textContent || ''"))
     print('PANEL_PRESENT',repr(result[:150]),flush=True)
-    if '1.9.9' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
-    text=poll('first 2 IP scanned',lambda:ev("document.getElementById('wallcheck-status')?.textContent?.includes('本机探针') && document.getElementById('wallcheck-count')?.textContent || ''"),seconds=18)
+    if '2.0.2' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
+    text=poll('first 2 IP scanned',lambda:ev("Number(document.getElementById('wallcheck-last-success')?.dataset?.timestamp)>0 && document.getElementById('wallcheck-count')?.textContent || ''"),seconds=18)
     print('FIRST_SCAN',repr(text),flush=True)
     poll('default 5min loaded from worker',lambda:ev("""(()=>{
       const label=document.getElementById('wallcheck-interval-label')?.textContent||'';
       const status=document.getElementById('wallcheck-interval-feedback')?.textContent||'';
-      return label.includes('每 5 分钟') && status.includes('当前已保存');
+      return label.includes('每 5 分钟') && status.includes('已保存：5 分钟');
     })()"""))
     ev("""(()=>{
       document.getElementById('wallcheck-auto-minutes').value='7';
@@ -122,7 +122,7 @@ try:
     poll('custom 7min saved and effective',lambda:ev("""(()=>{
       const a=document.getElementById('wallcheck-interval-feedback')?.textContent||'';
       const b=document.getElementById('wallcheck-interval-label')?.textContent||'';
-      return a.includes('已生效：每 7 分钟') && b.includes('每 7 分钟');
+      return a.includes('已保存：7 分钟') && b.includes('每 7 分钟');
     })()"""))
     print('CUSTOM_INTERVAL_7_MINUTES_PERSISTED_PASS',flush=True)
     ev("""(()=>{
@@ -133,7 +133,7 @@ try:
       "document.getElementById('wallcheck-interval-feedback')?.textContent?.includes('请输入 1～60')"))
     print('INTERVAL_SAVE_VALIDATE_PASS',flush=True)
     def scan_label_time():
-        return ev("document.getElementById('wallcheck-status')?.textContent.match(/上次实测\\s*(\\d{1,2}:\\d{2}:\\d{2})/)?.[1] || null")
+        return ev("Number(document.getElementById('wallcheck-last-success')?.dataset?.timestamp)||null")
     original_time=scan_label_time()
     assert original_time,'LAST_CHECK_TIME_NOT_EXPLICIT'
     time.sleep(1.35)
@@ -156,6 +156,22 @@ try:
         Math.abs(a.bottom-b.bottom)<=2 && a.left>=0 && b.right<=innerWidth;
     })()"""))
     print('ALERT_LEFT_OF_STATUS_DESKTOP_PASS',flush=True)
+    poll('three real times and aligned panel controls',lambda:ev(r"""(()=>{
+      const panel=document.getElementById('wallcheck-panel');
+      const b=panel.getBoundingClientRect();
+      const input=document.getElementById('wallcheck-auto-minutes').getBoundingClientRect();
+      const save=document.getElementById('wallcheck-interval-save').getBoundingClientRect();
+      const measured=Number(document.getElementById('wallcheck-last-success')?.dataset?.timestamp);
+      const next=document.getElementById('wallcheck-next-check')?.textContent||'';
+      return measured>0 && /\d{1,2}:\d{2}/.test(next) &&
+        Math.abs((input.top+input.bottom)-(save.top+save.bottom))<8 &&
+        input.right<=save.left && save.right<=b.right && panel.scrollWidth<=panel.clientWidth+1;
+    })()"""))
+    print('PANEL_TIMES_AND_CONTROL_ALIGNMENT_PASS',flush=True)
+    if os.environ.get('WALLCHECK_SCREENSHOT_DIR'):
+      shots=pathlib.Path(os.environ['WALLCHECK_SCREENSHOT_DIR']);shots.mkdir(parents=True,exist_ok=True)
+      (shots/'wallcheck-desktop.png').write_bytes(base64.b64decode(cdp('Page.captureScreenshot',{'format':'png'})['data']))
+
     # Smaller window: stack ① ABOVE ② instead of covering status buttons.
     cdp('Emulation.setDeviceMetricsOverride',
         {'width':600,'height':800,'deviceScaleFactor':1,'mobile':False})
@@ -167,6 +183,8 @@ try:
         a.right<=innerWidth+1 && b.right<=innerWidth+1;
     })()"""))
     print('ALERT_STACKS_ABOVE_STATUS_NARROW_PASS',flush=True)
+    if os.environ.get('WALLCHECK_SCREENSHOT_DIR'):
+      (shots/'wallcheck-narrow.png').write_bytes(base64.b64decode(cdp('Page.captureScreenshot',{'format':'png'})['data']))
     cdp('Emulation.clearDeviceMetricsOverride')
     ev("window.dispatchEvent(new Event('resize'))")
     ev("""[...document.querySelectorAll('.wc-alert-entry')]
@@ -179,7 +197,7 @@ try:
     ev("document.getElementById('wallcheck-notification-test').click()")
     poll('notification API responded',lambda:ev("""(()=>{
        const s=document.getElementById('wallcheck-notification-test-status');
-       return s && (s.textContent.includes('已提交浏览器通知') ||
+       return s && (s.textContent.includes('已提交通知') ||
           s.textContent.includes('通知提交失败'));
     })()"""))
     status=ev("document.getElementById('wallcheck-notification-test-status').textContent")
@@ -230,15 +248,15 @@ try:
     poll('ack durable through scan',lambda:ev("""(()=>{
       const box=document.getElementById('wallcheck-hidden-targets');
       const status=document.getElementById('wallcheck-status');
-      return box.style.display==='none' && status.textContent.includes('本机探针');
+      return box.style.display==='none' && Number(document.getElementById('wallcheck-last-success')?.dataset?.timestamp)>0;
     })()"""))
     # User-reported bug happened specifically after reloading the AWS.SB page:
     # reload the real Chromium tab, then hide the same historic IPv4 again.
     ev("location.reload()")
     poll('extension panel after page reload',lambda:ev(
-      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.9')"))
+      "document.getElementById('wallcheck-panel')?.textContent?.includes('2.0.2')"))
     poll('reloaded original list verified',lambda:ev(
-      "document.getElementById('wallcheck-status')?.textContent?.includes('本机探针')"))
+      "Number(document.getElementById('wallcheck-last-success')?.dataset?.timestamp)>0"))
     ev("window.__wcCard2=document.getElementById('card2');window.__wcCard2.remove()")
     poll('hidden ack survives actual F5',lambda:ev("""(()=>{
       const box=document.getElementById('wallcheck-hidden-targets');
@@ -257,7 +275,7 @@ try:
       document.getElementById('wallcheck-interval-save').click();return true;
     })()""")
     poll('return to default five minutes',lambda:ev(
-      "document.getElementById('wallcheck-interval-feedback')?.textContent?.includes('已生效：每 5 分钟')"))
+      "document.getElementById('wallcheck-interval-feedback')?.textContent?.includes('已保存：5 分钟')"))
     print('INTERVAL_SAVE_VALIDATE_AND_RESET_PASS',flush=True)
     # A genuine new hidden target-set must be noticed again, even if the
     # previous one was acknowledged. Existing alert histories are preserved.
@@ -303,7 +321,7 @@ try:
       'resourceType':'Document','requestStage':'Request'}]})
     cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-scope-B-789'})
     poll('second scope scanning',lambda:ev(
-      "document.getElementById('wallcheck-status')?.textContent?.includes('本机探针')"))
+      "Number(document.getElementById('wallcheck-last-success')?.dataset?.timestamp)>0"))
     assert ev("document.querySelectorAll('.wallcheck-change-badge').length")==0, \
         'NEW_SGT_OLD_IP_FALSE_ALERT'
     print('TWO_SGT_ISOLATION_OK',flush=True)
@@ -341,7 +359,7 @@ try:
       'resourceType':'Document','requestStage':'Request'}]})
     cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-scope-A-123'})
     poll('same-sgt stale tab scan',lambda:ev(
-      "document.getElementById('wallcheck-status')?.textContent?.includes('本机探针')"))
+      "Number(document.getElementById('wallcheck-last-success')?.dataset?.timestamp)>0"))
     assert not ev("document.querySelector('.wallcheck-change-badge')?.textContent?.includes('127.0.0.4 → 127.0.0.1')"),'FALSE_REVERSE_AFTER_SAME_SGT_STALE_OPEN'
     print('SAME_SGT_STALE_TAB_GUARD_OK',flush=True)
     ws=wsA
@@ -364,7 +382,7 @@ try:
     ev("""(()=>{
       document.getElementById('ip1').textContent='IP 127.0.0.7';
       document.querySelector('#card1 div:nth-child(3)').textContent=
-        'IPv6 2406:da1e:eeee:ffff::7';
+        'IPv6 2001:db8:100::6';
       return true;
     })()""")
     poll('slot #1 replacement visible in alert',lambda:ev("""(()=>{
@@ -378,7 +396,7 @@ try:
     ev("""(()=>{
       document.getElementById('ip1').textContent='IP 127.0.0.8';
       document.querySelector('#card1 div:nth-child(3)').textContent=
-        'IPv6 2406:da1e:eeee:ffff::8';
+        'IPv6 2001:db8:100::7';
       return true;
     })()""")
     poll('replacement change history accumulates 2',lambda:ev("""(()=>{

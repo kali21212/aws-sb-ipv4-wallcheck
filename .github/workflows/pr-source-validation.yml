@@ -1,0 +1,19 @@
+name: WallCheck source validation
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: wallcheck-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate public source privacy
+        run: node tests/public-privacy-regression.cjs
+      - name: Test browser-extension logic
+        run: node tests/extension-regression.cjs

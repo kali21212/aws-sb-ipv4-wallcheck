@@ -4,12 +4,12 @@ const context={};vm.createContext(context);
 const ext=path.join(__dirname,'../browser-extension');
 vm.runInContext(fs.readFileSync(path.join(ext,'monitor-core.js'),'utf8'),context);
 const a='sgt:'+'a'.repeat(64),b='sgt:'+'b'.repeat(64);
-const id0='ipv6:2406:da1e:bbbb:0001::1';
-const id1='ipv6:2406:da1e:bbbb:0002::1';
-const id2='ipv6:2406:da1e:bbbb:0003::1';
-const id3='ipv6:2406:da1e:bbbb:0004::1';
-const addr0='95.40.2.172',addr1='16.162.25.232',
-  addr2='54.46.44.121',addr3='18.162.225.248';
+const id0='ipv6:2001:db8:100::d';
+const id1='ipv6:2001:db8:100::e';
+const id2='ipv6:2001:db8:100::f';
+const id3='ipv6:2001:db8:100::10';
+const addr0='203.0.113.115',addr1='203.0.113.102',
+  addr2='203.0.113.112',addr3='203.0.113.108';
 const storage={};let now=1760751000000;
 const make=()=>context.createWallCheckMonitor({
  read:async k=>storage[k]?structuredClone(storage[k]):undefined,
@@ -28,7 +28,7 @@ const rec=(ip,instanceId,label)=>({ip,instanceId,label,pageOpenedAt:now+100,chan
   assert.equal(snapB.snapshot.hiddenNoticeAckKey,'');
   // Acknowledging a normal change/fault does not remove historic targets.
   const changed=await invoke(a,'monitor:observe',{records:[
-    {...rec('95.40.2.173',id0,'#1 待定组'),changedHere:true}
+    {...rec('203.0.113.116',id0,'#1 待定组'),changedHere:true}
   ]});
   assert(changed.snapshot.alerts.some(x=>x.kind==='IP_CHANGE'));
   const change=changed.snapshot.alerts.find(x=>x.kind==='IP_CHANGE');
@@ -61,15 +61,15 @@ const rec=(ip,instanceId,label)=>({ip,instanceId,label,pageOpenedAt:now+100,chan
     .snapshot.hiddenNoticeAckKey,[addr1,addr2].sort().join('|'));
   // Real A-B-C history still functions normally after the hidden-target ack.
   const next=await restarted.dispatch({scope:a,type:'monitor:observe',records:[
-    {...rec('95.40.2.174',id0,'#1 待定组'),changedHere:true}
+    {...rec('203.0.113.117',id0,'#1 待定组'),changedHere:true}
   ]});
   assert(next.newAlerts.some(x=>x.kind==='IP_CHANGE'));
   assert.equal(next.snapshot.hiddenNoticeAckKey,[addr1,addr2].sort().join('|'));
   // Original clear action re-baselines this scope, without affecting another.
   const cleared=await restarted.dispatch({scope:a,type:'monitor:clear',records:[
-    rec('95.40.2.174',id0,'#1 待定组')]});
+    rec('203.0.113.117',id0,'#1 待定组')]});
   assert.equal(cleared.snapshot.hiddenNoticeAckKey,'');
-  assert.deepEqual([...cleared.snapshot.currentIPs],['95.40.2.174']);
+  assert.deepEqual([...cleared.snapshot.currentIPs],['203.0.113.117']);
   assert.equal((await restarted.dispatch({scope:b,type:'monitor:get'}))
     .snapshot.instances[id3].ip,addr3);
   const content=fs.readFileSync(path.join(ext,'content.js'),'utf8');

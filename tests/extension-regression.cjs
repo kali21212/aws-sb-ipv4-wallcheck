@@ -6,7 +6,7 @@ const cp=require('node:child_process');
 const dir=path.resolve(__dirname,'..','browser-extension');
 const src=fs.readFileSync(path.join(dir,'content.js'),'utf8');
 const manifest=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json'),'utf8'));
-assert.equal(manifest.version,'1.9.9');
+assert.equal(manifest.version,'2.0.2');
 assert.deepEqual(manifest.permissions.slice().sort(),['alarms','notifications','storage']);
 assert(src.includes("const ONLY_PORTS = [22]"));
 assert(!src.includes('aws-sb-slot-')); // never use display ordinals as identity
@@ -16,9 +16,9 @@ const node=(text,parent=null)=>({
  innerText:text,textContent:text,parentElement:parent,children:[],
  closest:()=>null,querySelectorAll:()=>[],querySelector:()=>null
 });
-const card1=node('#1 ✎ 备用 6天\nIP 192.0.2.1\nIPv6 2406:da1e:aaaa:bbbb::1');
+const card1=node('#1 ✎ 备用 6天\nIP 192.0.2.1\nIPv6 2001:db8:100::2');
 const cell1=node('IP 192.0.2.1',card1);
-const card2=node('#1 ✎ 待定组 29天\nIP 192.0.2.2\nIPv6 2406:da1e:cccc:dddd::2');
+const card2=node('#1 ✎ 待定组 29天\nIP 192.0.2.2\nIPv6 2001:db8:100::5');
 const cell2=node('IP 192.0.2.2',card2);
 const document={body:node('ROOT')};
 const location={origin:'https://aws.sb',hash:'#/ec2-instances?sgt=synthetic-scope-A-123'};
@@ -73,5 +73,10 @@ assert.equal(api.classify('192.0.2.1',{results:{'192.0.2.1':{
  cp.execFileSync(process.execPath,[path.join(__dirname,'recovered-ack-regression.cjs')],{stdio:'inherit'});
  cp.execFileSync(process.execPath,[path.join(__dirname,'manual-regression.cjs')],{stdio:'inherit'});
  cp.execFileSync(process.execPath,[path.join(__dirname,'down-time-regression.cjs')],{stdio:'inherit'});
- console.log('PASS extension v1.8: hashed sgt scope, independent #1 cards, stable IPv6, 22-only classifications and scoped core');
+ cp.execFileSync(process.execPath,[path.join(__dirname,'probe-isolation-regression.cjs')],{stdio:'inherit'});
+ cp.execFileSync(process.execPath,[path.join(__dirname,'result-cache-regression.cjs')],{stdio:'inherit'});
+ cp.execFileSync(process.execPath,[path.join(__dirname,'async-scope-regression.cjs')],{stdio:'inherit'});
+ cp.execFileSync(process.execPath,[path.join(__dirname,'schedule-observability-regression.cjs')],{stdio:'inherit'});
+ cp.execFileSync(process.execPath,[path.join(__dirname,'content-runtime-recovery-regression.cjs')],{stdio:'inherit'});
+ console.log('PASS extension v2.0.2: hashed sgt scope, independent #1 cards, stable IPv6, 22-only classifications and scoped core');
 })().catch(e=>{console.error(e);process.exitCode=1;});

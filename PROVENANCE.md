@@ -1,7 +1,7 @@
 # Project Provenance
 
 Project: **AWS.SB IPv4 WallCheck Portable**  
-Version: **1.6.1**  
+Historical provenance baseline: **1.6.1**
 Repository owner / publisher: **kali21212**  
 Canonical repository: **https://github.com/kali21212/aws-sb-ipv4-wallcheck**  
 Initial public release date: **2026-09-28**
@@ -14,7 +14,7 @@ The public Git history, release tag, GitHub Release record, source files, releas
 
 ## Release artifact
 
-The current canonical Windows portable artifact is published in the GitHub Release for tag `v1.6.1`.
+The historical 1.6.1 Windows portable artifact is published in the GitHub Release for tag `v1.6.1`. Current source version metadata is recorded in `VERSION.txt`; a source branch alone does not establish that a public Release has been published.
 
 Verify the release ZIP against the adjacent SHA256 checksum file before use.
 
@@ -22,7 +22,7 @@ Verify the release ZIP against the adjacent SHA256 checksum file before use.
 
 The tool scans IPv4 addresses visible on the aws.sb EC2 instances page and sends only IPv4 values and configured TCP ports to a localhost probe bound to `127.0.0.1:17654`.
 
-It does not intentionally transmit aws.sb cookies, account data, page URLs, or `sgt` values to an external service. IPv6 addresses are ignored.
+It does not intentionally transmit aws.sb cookies, account data, page URLs, or `sgt` values to an external service. IPv6 addresses are never probed; displayed IPv6 text may identify an instance locally.
 
 ## v1.6.0 canonical release checksum
 

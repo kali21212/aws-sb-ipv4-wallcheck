@@ -6,12 +6,12 @@ const src=fs.readFileSync(path.join(__dirname,'../browser-extension/content.js')
 const mk=(text,parent=null)=>({innerText:text,textContent:text,parentElement:parent,
  children:[],closest:()=>null,querySelectorAll:()=>[],querySelector:()=>null});
 const body=mk('BODY');
-const left=mk('#1 待定组\nIP 54.46.44.121 (动态)\n地区 香港',null);
-const right=mk('#6 极图悟空\nIP 18.162.225.248 (动态)\nIPv6 2406:da1e:43ff:9df9:9ec4:49d:9ff2:ede7',null);
+const left=mk('#1 待定组\nIP 203.0.113.112 (动态)\n地区 香港',null);
+const right=mk('#6 示例实例六\nIP 203.0.113.108 (动态)\nIPv6 2001:db8:100::1',null);
 const grid=mk(left.innerText+'\n'+right.innerText,body);
 left.parentElement=grid;right.parentElement=grid;
-const firstCell=mk('IP 54.46.44.121 (动态)',left);
-const sixthCell=mk('IP 18.162.225.248 (动态)',right);
+const firstCell=mk('IP 203.0.113.112 (动态)',left);
+const sixthCell=mk('IP 203.0.113.108 (动态)',right);
 const document={body};
 const location={origin:'https://aws.sb',hash:'#/ec2-instances?sgt=test-shared-list'};
 const ctx={console,document,location,crypto,TextEncoder,URLSearchParams,
@@ -23,27 +23,27 @@ const injected=src.replace('  install();',
 assert.notEqual(injected,src,'needs insertion marker');
 vm.runInContext(injected,ctx);
 const api=ctx.testApi;
-const one=api.collectInstanceRecords(new Map([['54.46.44.121',[firstCell]]]));
-const six=api.collectInstanceRecords(new Map([['18.162.225.248',[sixthCell]]]));
+const one=api.collectInstanceRecords(new Map([['203.0.113.112',[firstCell]]]));
+const six=api.collectInstanceRecords(new Map([['203.0.113.108',[sixthCell]]]));
 const oneKey=[...one.keys()][0],sixKey=[...six.keys()][0];
-assert.equal(oneKey,'ip-target:54.46.44.121',
+assert.equal(oneKey,'ip-target:203.0.113.112',
   'missing IPv6 inside #1 must NEVER steal #6 IPv6 from common grid');
-assert.equal(sixKey,'ipv6:2406:da1e:43ff:9df9:9ec4:49d:9ff2:ede7',
+assert.equal(sixKey,'ipv6:2001:db8:100::1',
   '#6 must keep its own IPv6 ID');
 assert.notEqual(oneKey,sixKey,'cross-card identity collision forbidden');
 assert.equal(one.get(oneKey).label,'#1 待定组');
-assert.equal(six.get(sixKey).label,'#6 极图悟空');
+assert.equal(six.get(sixKey).label,'#6 示例实例六');
 const together=api.collectInstanceRecords(new Map([
- ['54.46.44.121',[firstCell]],['18.162.225.248',[sixthCell]]
+ ['203.0.113.112',[firstCell]],['203.0.113.108',[sixthCell]]
 ]));
 assert.equal(together.size,2,'both real card targets must survive');
-assert.equal(together.get(oneKey).ip,'54.46.44.121');
-assert.equal(together.get(sixKey).ip,'18.162.225.248');
+assert.equal(together.get(oneKey).ip,'203.0.113.112');
+assert.equal(together.get(sixKey).ip,'203.0.113.108');
 // The official EC2 identifier, if visible in a card, outranks IPv6.
-left.innerText='#1 i-086d87ec69f855186\nIP 54.46.44.121 (动态)\n地区 香港';
+left.innerText='#1 i-00000000000000002\nIP 203.0.113.112 (动态)\n地区 香港';
 grid.innerText=left.innerText+'\n'+right.innerText;
-const official=api.collectInstanceRecords(new Map([['54.46.44.121',[firstCell]]]));
-assert([...official.keys()][0].startsWith('ec2:i-086d87ec69f855186'));
+const official=api.collectInstanceRecords(new Map([['203.0.113.112',[firstCell]]]));
+assert([...official.keys()][0].startsWith('ec2:i-00000000000000002'));
 // An IP-looking historical datum elsewhere in the same grid is not
 // sufficient evidence of a current card / stable machine mapping.
 const unlabelled=mk('IP 192.0.2.65',grid);
