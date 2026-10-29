@@ -5,7 +5,7 @@ const root=path.join(__dirname,'..','browser-extension');
 const bg=fs.readFileSync(path.join(root,'background.js'),'utf8');
 const ui=fs.readFileSync(path.join(root,'content.js'),'utf8');
 const manifest=JSON.parse(fs.readFileSync(path.join(root,'manifest.json'),'utf8'));
-assert.equal(manifest.version,'1.9.9');
+assert.equal(manifest.version,'1.9.10');
 assert.match(bg,/const DEFAULT_AUTO_MINUTES = 5;/);
 assert.match(bg,/wallcheck_auto_interval_minutes_v1/);
 assert.match(ui,/const DEFAULT_AUTO_MINUTES = 5;/);

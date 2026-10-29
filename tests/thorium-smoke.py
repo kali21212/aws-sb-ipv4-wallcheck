@@ -107,7 +107,7 @@ try:
     cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-scope-A-123'})
     result=poll('extension panel injection',lambda:ev("document.getElementById('wallcheck-panel')?.textContent || ''"))
     print('PANEL_PRESENT',repr(result[:150]),flush=True)
-    if '1.9.9' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
+    if '1.9.10' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
     text=poll('first 2 IP scanned',lambda:ev("document.getElementById('wallcheck-status')?.textContent?.includes('本机探针') && document.getElementById('wallcheck-count')?.textContent || ''"),seconds=18)
     print('FIRST_SCAN',repr(text),flush=True)
     poll('default 5min loaded from worker',lambda:ev("""(()=>{
@@ -236,7 +236,7 @@ try:
     # reload the real Chromium tab, then hide the same historic IPv4 again.
     ev("location.reload()")
     poll('extension panel after page reload',lambda:ev(
-      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.9')"))
+      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.10')"))
     poll('reloaded original list verified',lambda:ev(
       "document.getElementById('wallcheck-status')?.textContent?.includes('本机探针')"))
     ev("window.__wcCard2=document.getElementById('card2');window.__wcCard2.remove()")

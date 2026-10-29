@@ -108,8 +108,8 @@ try:
     cdp('Fetch.enable',{'patterns':[{'urlPattern':'https://aws.sb/*',
       'resourceType':'Document','requestStage':'Request'}]})
     cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-manual-smoke'})
-    poll('WallCheck 1.9.9 panel',lambda:ev(
-      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.9')"))
+    poll('WallCheck 1.9.10 panel',lambda:ev(
+      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.10')"))
     ev("document.getElementById('wallcheck-manual-open').click()")
     page=poll('manual monitor option tab',lambda:next((x for x in
       requests.get(f'http://127.0.0.1:{port}/json',timeout=1).json()

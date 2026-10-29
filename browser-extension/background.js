@@ -1,4 +1,4 @@
-importScripts('monitor-core.js','probe-isolation.js','manual-core.js');
+importScripts('monitor-core.js','probe-isolation.js','manual-core.js','result-cache.js');
 
 const AUTO_ALARM = 'wallcheck-auto-recheck';
 const AUTO_INTERVAL_KEY = 'wallcheck_auto_interval_minutes_v1';
@@ -156,6 +156,49 @@ if(chrome.notifications?.onClicked){
 }
 
 
+// Last-valid probe results also need a single writer: concurrent tabs submit
+// scoped deltas instead of overwriting one shared storage snapshot.
+// Cache clears and guarded probe-state updates share one ordering boundary.
+let resultLifecycleQueue=Promise.resolve();
+function queueResultLifecycle(operation){
+  const task=resultLifecycleQueue.catch(()=>{}).then(operation);
+  resultLifecycleQueue=task.then(()=>{},()=>{});
+  return task;
+}
+const resultCache = createWallCheckResultCache({
+  read: keys => new Promise((resolve,reject) =>
+    chrome.storage.local.get(keys, data => {
+      const error=chrome.runtime.lastError;
+      error ? reject(Error(error.message)) : resolve(data);
+    })),
+  write: values => new Promise((resolve,reject) =>
+    chrome.storage.local.set(values, () => {
+      const error=chrome.runtime.lastError;
+      error ? reject(Error(error.message)) : resolve();
+    }))
+});
+chrome.runtime.onMessage.addListener((msg,sender,sendResponse) => {
+  if(!String(msg?.type||'').startsWith('results:'))return;
+  if(sender?.tab && !String(sender.tab.url||'').startsWith('https://aws.sb/')){
+    sendResponse({ok:false,error:'Origin rejected'});
+    return false;
+  }
+  queueResultLifecycle(async()=>{
+    const data=await resultCache.dispatch(msg);
+    if(msg.type==='results:clear')chrome.tabs.query({url:'https://aws.sb/*'},tabs=>{
+      for(const tab of tabs){
+        if(!tab.id || tab.id===sender?.tab?.id)continue;
+        chrome.tabs.sendMessage(tab.id,{type:'results:cleared',scope:msg.scope,epoch:data.epoch},()=>{
+          void chrome.runtime.lastError;
+        });
+      }
+    });
+    return data;
+  }).then(data=>sendResponse({ok:true,data}))
+    .catch(error=>sendResponse({ok:false,error:String(error.message||error)}));
+  return true;
+});
+
 // Authoritative single-writer monitor state: no content tab may write scoped
 // IP baselines or acknowledgements directly to chrome.storage.local.
 const monitor = createWallCheckMonitor({
@@ -247,9 +290,17 @@ chrome.runtime.onMessage.addListener((msg,sender,sendResponse) => {
     sendResponse({ok:false,error:'Origin rejected'});
     return false;
   }
-  monitor.dispatch(msg).then(result=>{
+  const dispatch=()=>monitor.dispatch(msg);
+  const request=msg.resultEpoch===undefined ? dispatch() : queueResultLifecycle(async()=>{
+    const current=await resultCache.dispatch({type:'results:get',scope:msg.scope});
+    if(current.epoch!==msg.resultEpoch){
+      return {stale:true,snapshot:null,newAlerts:[],write:false};
+    }
+    return dispatch();
+  });
+  request.then(result=>{
     for(const ev of result.newAlerts || [])newMonitorNotification(ev);
-    sendResponse({ok:true,data:result.snapshot,changed:result.write});
+    sendResponse({ok:true,data:result.snapshot,changed:result.write,stale:!!result.stale});
     if(result.write) chrome.tabs.query({},tabs=>{
       for(const tab of tabs){
         if(!tab.id)continue;

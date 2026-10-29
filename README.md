@@ -7,10 +7,34 @@ It combines a Chromium extension with a localhost probe to:
 - automatically detect IPv4 addresses on `aws.sb/#/ec2-instances`;
 - never probe IPv6 (it may identify the instance when EC2 ID is not visible);
 - test ICMP reachability plus TCP port 22 only;
-- automatically recheck every 10 minutes;
+- automatically recheck every 5 minutes by default, configurable from 1 to 60 minutes;
 - detect IPv4 changes only within the same sgt account scope and stable instance identity;
 - retain unacknowledged IPv4 change history until manually acknowledged (no flashing) and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
+
+## Async page isolation and concurrent result storage (v1.9.10)
+
+- Each scan captures its account scope, route, generation, IPv4/instance
+  identity and account-card state. After asynchronous work it checks that
+  the snapshot is still current. Results and errors arriving after navigation,
+  account switching or IP replacement cannot update the new page, its
+  measurement time or its reachability conditions. A current-page recheck
+  follows automatically.
+- Last-valid probe results now have one background writer. Concurrent tabs
+  submit scoped deltas; one completed scan can no longer erase another
+  account's results. Existing stored results remain readable.
+- Clearing a scope invalidates its in-flight cache writes using a persisted
+  generation. Other scopes, pending alerts and the saved interval stay intact.
+- Default 5-minute and saved 1–60-minute intervals, strict Ping OR TCP22
+  severe alerts, the local agent and Guardian are unchanged.
+- Regression tests execute the real worker, monitor and scanning code with
+  controlled delayed replies: cross-account navigation, simultaneous tabs,
+  same-account IP replacement, leaving EC2, and late transport errors.
+  Separate cache tests cover clear-during-probe, restart, ordering, legacy
+  data and storage failures. Run node tests/extension-regression.cjs.
+
+The sections below describe earlier releases. The current AWS.SB interval
+is the saved 1–60-minute setting above, with a 5-minute default.
 
 ## User-configurable automatic check interval (v1.9.9)
 

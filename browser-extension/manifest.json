@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AWS.SB IPv4 WallCheck Portable",
-  "version": "1.9.9",
+  "version": "1.9.10",
   "description": "Local IPv4 monitor for aws.sb: ICMP plus TCP 22; IPv6 may identify an instance but is never probed.",
   "permissions": [
     "storage",

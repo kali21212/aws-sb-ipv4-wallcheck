@@ -9,6 +9,7 @@
   const SCOPED_MONITOR_VERSION = 3;
   const openedAt = Date.now();
   let currentScope = null;
+  let scopeGeneration = 0;
   let scopeCurrentIPs = [];
   let scopeInstances = {};
   let hiddenNoticeAckKey = '';
@@ -24,7 +25,6 @@
   const cache = new Map();
   const lastCombined = new Map();
   const recentChanges = new Map();
-  const RESULT_KEY = 'wallcheck_last_valid_results_v3';
   let pendingCheck = false;
   let pendingForce = false;
   let retryTimer = null;
@@ -33,18 +33,6 @@
   let alertsHydrated = false;
   let pendingMonitorSync = false;
   const AGENT_FAILURE_KINDS = new Set(['AGENT_OFFLINE','EXTENSION_CONTEXT']);
-  const storageGet = keys => new Promise((resolve, reject) => {
-    chrome.storage.local.get(keys, data => {
-      const err = chrome.runtime.lastError;
-      err ? reject(new Error(err.message)) : resolve(data);
-    });
-  });
-  const storageSet = data => new Promise((resolve, reject) => {
-    chrome.storage.local.set(data, () => {
-      const err = chrome.runtime.lastError;
-      err ? reject(new Error(err.message)) : resolve();
-    });
-  });
   let running = false;
   let scanTimer = null;
   let mutatingBadges = false;
@@ -120,6 +108,7 @@ function monitorRequest(type, fields={}) {
 
   function resetLocalScope(next){
     if(currentScope===next)return;
+    scopeGeneration++;
     currentScope=next;
     lastKnownScope=next;
     alertsHydrated=false;
@@ -133,6 +122,8 @@ function monitorRequest(type, fields={}) {
     recentChanges.clear();
     lastDomSignature=null;
     lastAccountSignature=null;
+    lastFinishedAt=null;
+    clearTimeout(retryTimer);
     localSlotIPs.clear();
     renderAlerts();
     renderHiddenNotice(collectIPCells());
@@ -255,7 +246,7 @@ function monitorRequest(type, fields={}) {
     ]));
   }
 
-  async function syncAccountSignals(records,verifiedIPs=new Set()){
+  async function syncAccountSignals(records,verifiedIPs=new Set(),resultEpoch){
     if(!currentScope || !records.length)return;
     const ipCells=collectIPCells();
     const instances=collectInstanceRecords(ipCells);
@@ -270,12 +261,13 @@ function monitorRequest(type, fields={}) {
       if(r.ip)localSlotIPs.set(localKey,r.ip);
       return value;
     });
-    updateFromSnapshot(await monitorRequest('monitor:account',{records:safe}));
+    updateFromSnapshot(await monitorRequest('monitor:account',{records:safe,...(resultEpoch===undefined?{}:{resultEpoch})}));
   }
 
   async function scanAccountStatusWithoutProbe(){
+    const hash=location.hash;
     const signed=await scopeFromURL();
-    if(!signed)return;
+    if(!signed || location.hash!==hash || !isEC2Route())return;
     if(currentScope!==signed)resetLocalScope(signed);
     await syncAccountSignals(collectAccountCards());
   }
@@ -391,11 +383,11 @@ function observedRecords(records) {
     // Instance label updates are now part of the centralized observe transaction.
   }
 
-  async function updateAgentHealth(ok,reason=''){
-    updateFromSnapshot(await monitorRequest('monitor:agent',{ok,reason}));
+  async function updateAgentHealth(ok,reason='',resultEpoch){
+    updateFromSnapshot(await monitorRequest('monitor:agent',{ok,reason,...(resultEpoch===undefined?{}:{resultEpoch})}));
   }
 
-  async function updateReachability(records,combined){
+  async function updateReachability(records,combined,resultEpoch){
     const items=[];
     for(const rec of records.values()){
       const key=combined.get(rec.ip)?.key;
@@ -405,7 +397,7 @@ function observedRecords(records) {
         key==='LOCAL_OK'?'OK':null;
       if(status)items.push({instanceId:rec.instanceId,ip:rec.ip,status});
     }
-    updateFromSnapshot(await monitorRequest('monitor:reachability',{items}));
+    updateFromSnapshot(await monitorRequest('monitor:reachability',{items,...(resultEpoch===undefined?{}:{resultEpoch})}));
   }
 
   async function acknowledgeAlerts(ids){
@@ -433,23 +425,24 @@ function observedRecords(records) {
 
   async function clearThisScope(){
     if(!currentScope)return;
+    const scope=currentScope;
+    const hash=location.hash;
+    const generation=++scopeGeneration;
     const cells=collectIPCells();
     const records=collectInstanceRecords(cells);
     const clean=[...records.values()].map(({instanceId,ip,label})=>({instanceId,ip,label}));
-    const result=await monitorRequest('monitor:clear',{records:clean});
+    // Invalidate in-flight probes before clearing, including other tabs on
+    // this scope. The background preserves every other scope's cache.
+    await monitorRequest('results:clear',{scope});
+    const result=await monitorRequest('monitor:clear',{scope,records:clean});
+    if(currentScope!==scope || location.hash!==hash || scopeGeneration!==generation)return result;
     updateFromSnapshot(result);
-    // Also discard this scope's cached probe results; preserve other sgt caches.
-    const data=await storageGet([RESULT_KEY]);
-    const previous=data[RESULT_KEY] || {};
-    for(const key of Object.keys(previous)){
-      if(key.startsWith(currentScope+'|'))delete previous[key];
-    }
-    await storageSet({[RESULT_KEY]:previous});
     cache.clear();
     lastCombined.clear();
+    lastFinishedAt=null;
     // Store the freshly cleared baseline so the next scan does not treat
     // the same page as an IP change and does not show legacy ghost markers.
-    for(const r of clean)localDomIPs.set(currentScope+'|'+r.instanceId,r.ip);
+    for(const r of clean)localDomIPs.set(scope+'|'+r.instanceId,r.ip);
     return result;
   }
 
@@ -748,61 +741,94 @@ function classify(ip,localResp) {
     panel.style.display = 'block';
     if(alertsHydrated)renderAlerts();
     running = true;
+    const checkHash=location.hash;
+    let checkScope=null;
+    let checkGeneration=scopeGeneration;
+    let checkSignature=null;
+    let checkAccountSignature=null;
     let ipCells;
     let previous = new Map();
     let transportUnavailable = false;
+    // A probe belongs to the exact page/target snapshot that started it.
+    // Navigation, a scope reset or an IP/account replacement invalidates it.
+    const stillCurrent=()=>{
+      if(!isEC2Route() || location.hash!==checkHash ||
+         scopeGeneration!==checkGeneration ||
+         (checkScope && currentScope!==checkScope))return false;
+      if(checkSignature!==null){
+        const cells=collectIPCells();
+        if(domSignature(cells,collectInstanceRecords(cells))!==checkSignature ||
+           accountSignalSignature(collectAccountCards())!==checkAccountSignature)return false;
+      }
+      return true;
+    };
+    const ensureCurrent=()=>{
+      if(stillCurrent())return true;
+      if(isEC2Route()){
+        pendingCheck=true;
+        pendingForce=true;
+      }else{
+        panel.style.display='none';
+        const alerts=document.getElementById('wallcheck-alert-center');
+        if(alerts)alerts.style.display='none';
+      }
+      return false;
+    };
     try {
-      ipCells = collectIPCells();
-      const currentIPs = [...ipCells.keys()];
       const scope=await scopeFromURL();
+      if(!ensureCurrent())return;
       if(!scope){
         document.getElementById('wallcheck-status').textContent =
           '⚠ 本页缺少 sgt，无法安全记录 IP 变化';
-        // No IP-change inference without a stable account scope.
         return;
       }
       resetLocalScope(scope);
+      checkScope=scope;
+      checkGeneration=scopeGeneration;
+      ipCells = collectIPCells();
+      const currentIPs = [...ipCells.keys()];
       const instanceRecords = collectInstanceRecords(ipCells);
       const accountCards=collectAccountCards();
-      lastDomSignature=domSignature(ipCells,instanceRecords);
-      lastAccountSignature=accountSignalSignature(accountCards);
+      checkSignature=domSignature(ipCells,instanceRecords);
+      checkAccountSignature=accountSignalSignature(accountCards);
+      lastDomSignature=checkSignature;
+      lastAccountSignature=checkAccountSignature;
       await hydrateAlerts();
+      if(!ensureCurrent())return;
       // Account invalidity is recorded BEFORE any slow ICMP/TCP roundtrip.
       await syncAccountSignals(accountCards);
+      if(!ensureCurrent())return;
       const syncResult = await syncInstanceState(instanceRecords);
-      // Scoped coordinator updates instance display names automatically.
+      if(!ensureCurrent())return;
       if (syncResult.newChanges.length) {
         cache.clear();
         force = true;
-        // Changes already persisted in background, exactly once.
       }
       refreshChangeMarkers();
-      // Only visible addresses on THIS signed sgt page are probed.
       const ips = currentIPs;
       document.getElementById('wallcheck-count').textContent = '当前 ' + currentIPs.length + ' / 列表 ' + ips.length + (recentChanges.size ? ' / IP变更 ' + recentChanges.size : '');
       if (!ips.length) { document.getElementById('wallcheck-status').textContent = '本页当前无可见 IPv4｜历史基线保留'; return; }
       const ports = parsePorts();
       const portKey = ports.join(',');
-      const key = currentScope + '|' + ips.slice().sort().join('|') + '::' + portKey;
-      const data = await storageGet([RESULT_KEY]);
-      const saved = data[RESULT_KEY] || {};
+      const key = checkScope + '|' + ips.slice().sort().join('|') + '::' + portKey;
+      const saved = await monitorRequest('results:get',{scope:checkScope});
+      if(!ensureCurrent())return;
       for (const ip of ips) {
-        const entry = saved[currentScope + '|' + ip + '::' + portKey];
+        const entry = saved.entries[checkScope + '|' + ip + '::' + portKey];
         if (entry?.value && entry.checkedAt) previous.set(ip, entry.value);
       }
       applyBadges(ipCells, previous);
       const hit = cache.get(key);
       if (!force && hit && Date.now() - hit.time < CACHE_MS) {
         applyBadges(ipCells, hit.value);
-        // A cached paint is NOT a fresh network check. Explicitly label
-        // its timestamp so users do not mistake it for the current clock.
         document.getElementById('wallcheck-status').textContent =
           '缓存结果（未重测） · 上次实测 ' + new Date(hit.time).toLocaleTimeString();
         return;
       }
       document.getElementById('wallcheck-status').textContent = previous.size ? '已恢复上次有效结果 · 正在重新验证' : '检测中 · ' + ips.length + ' 个 IPv4';
-      // Keep healthy results even if one target fails; bounded individual retries.
       const outcome=await wallcheckProbeWithIsolation(ips,ports,probe);
+      const checkedAt = Date.now();
+      if(!ensureCurrent())return;
       if(outcome.transportFailure){
         transportUnavailable=true;
         throw new Error(outcome.batchError || '本机检测通信失败');
@@ -812,62 +838,64 @@ function classify(ip,localResp) {
       const failedIPs=ips.filter(ip=>!localResp.results[ip]);
       if(!succeededIPs.length)
         throw new Error('检测接口未返回任何可验证目标结果');
-      await updateAgentHealth(true);
       const combined = new Map();
-      const checkedAt = Date.now();
+      const entries={};
       for (const ip of ips) {
         if(!localResp.results[ip]){
           const old=previous.get(ip);
           const info=old?.text ? '｜上次：'+old.text.slice(0,85) : '';
-          const c={key:'PROBE_UNVERIFIED',text:'⚠ 本次未验证'+info};
-          combined.set(ip,c);
-          lastCombined.set(ip,c);
-          continue; // Not a verified unreachable host; do not cache this.
+          combined.set(ip,{key:'PROBE_UNVERIFIED',text:'⚠ 本次未验证'+info});
+          continue;
         }
         const c=classify(ip,localResp);
         combined.set(ip,c);
-        lastCombined.set(ip,c);
-        saved[currentScope + '|' + ip + '::' + portKey]={value:c,checkedAt};
+        entries[checkScope + '|' + ip + '::' + portKey]={value:c,checkedAt};
       }
-      const bounded = Object.fromEntries(Object.entries(saved).sort((a,b) => b[1].checkedAt - a[1].checkedAt).slice(0,2000));
-      await storageSet({[RESULT_KEY]: bounded});
+      const committed=await monitorRequest('results:merge',{
+        scope:checkScope,epoch:saved.epoch,entries
+      });
+      if(!ensureCurrent())return;
+      if(!committed.applied){
+        // Another tab explicitly cleared this scope while the probe ran.
+        pendingCheck=true;
+        pendingForce=true;
+        return;
+      }
       clearTimeout(retryTimer);
       lastFinishedAt = new Date(checkedAt);
+      for(const [ip,result] of combined)lastCombined.set(ip,result);
       if(failedIPs.length)cache.delete(key);
       else cache.set(key,{time:checkedAt,value:combined});
       applyBadges(ipCells, combined);
-      await updateReachability(instanceRecords, combined);
-      // Recovery is acknowledged only with a fresh successful TCP22 probe,
-      // never merely because a transient red banner disappeared.
-      await syncAccountSignals(collectAccountCards(),new Set(
-        ips.filter(ip=>combined.get(ip)?.key==='LOCAL_OK')));
-      // History is a separate, acknowledgeable informational row, not an
-      // active probe-health warning. Keep it out of the status text entirely.
       renderHiddenNotice(ipCells);
       const status=document.getElementById('wallcheck-status');
-      // Always show the timestamp of THIS completed real probe, including
-      // partial results, instead of displaying a misleading stale time.
       status.textContent=failedIPs.length ?
         '⚠ 本轮实测 '+lastFinishedAt.toLocaleTimeString()+' · 已验证 '+
           succeededIPs.length+'/'+ips.length+' 个 IPv4｜其余未验证｜15秒后补测' :
         '本机探针✓ · '+ips.length+' 个可见 IPv4 · 上次实测 '+
           lastFinishedAt.toLocaleTimeString();
+      status.title='';
       if(failedIPs.length)retryTimer=setTimeout(()=>runCheck(true),15000);
-      document.getElementById('wallcheck-status').title = '';
+      await updateAgentHealth(true,'',saved.epoch);
+      if(!ensureCurrent())return;
+      await updateReachability(instanceRecords, combined,saved.epoch);
+      if(!ensureCurrent())return;
+      // Recovery requires a fresh verified result from this same page snapshot.
+      await syncAccountSignals(accountCards,new Set(
+        ips.filter(ip=>combined.get(ip)?.key==='LOCAL_OK')),saved.epoch);
     } catch (err) {
+      // A late failure belongs to the old page too; do not mislabel the new one.
+      if(!ensureCurrent())return;
       cache.clear();
       if (ipCells) applyBadges(ipCells, previous);
-      // A bad AWS account, DOM parse, or storage error is NOT proof that
-      // localhost agent is offline. Only confirmed probe transport failure is.
       if(alertsHydrated && transportUnavailable){
         try{await updateAgentHealth(false,err.message||String(err));}catch(_){}
+        if(!ensureCurrent())return;
       }
       const status = document.getElementById('wallcheck-status');
-      // Report the failed ATTEMPT time separately from last good result.
-      // Never claim that old cached success was just re-verified.
       status.textContent = '⚠ '+new Date().toLocaleTimeString()+
         ' 本轮检测失败｜' +
-        (previous.size ? '保留上次有效结果' : '本机探针不可用') +
+        (previous.size ? '保留上次有效结果' : '本轮尚未取得有效结果') +
         '｜15秒后重试';
       status.title = String(err.message || err);
       clearTimeout(retryTimer);
@@ -876,7 +904,7 @@ function classify(ip,localResp) {
       running = false;
       if (pendingMonitorSync) {
         pendingMonitorSync = false;
-        monitorRequest('monitor:get').then(snapshot=>{
+        if(isEC2Route() && currentScope)monitorRequest('monitor:get').then(snapshot=>{
           updateFromSnapshot(snapshot);
           applyBadges(collectIPCells(),lastCombined);
         }).catch(()=>{});
@@ -955,7 +983,7 @@ function classify(ip,localResp) {
     const panel = document.createElement('div');
     panel.id = 'wallcheck-panel';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.9</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.10</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
       <div id="wallcheck-hidden-targets" style="display:none"></div>
       <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空本页记录</button></div>
@@ -1092,6 +1120,15 @@ function classify(ip,localResp) {
     chrome.runtime.onMessage.addListener(msg=>{
       if(msg?.type==='auto-recheck' || msg?.type==='startup-recheck'){
         runCheck(true);
+      } else if(msg?.type==='results:cleared' && msg.scope===currentScope){
+        scopeGeneration++;
+        cache.clear();
+        lastCombined.clear();
+        lastFinishedAt=null;
+        clearTimeout(retryTimer);
+        document.getElementById('wallcheck-status').textContent='本页记录已清空，等待重新检测';
+        if(running){pendingCheck=true;pendingForce=true;}
+        else setTimeout(()=>runCheck(true),0);
       } else if(msg?.type==='monitor-sync' && msg.scope===currentScope){
         if(running){pendingMonitorSync=true;return;}
         monitorRequest('monitor:get').then(snapshot=>{
@@ -1101,7 +1138,15 @@ function classify(ip,localResp) {
       }
     });
 
-    window.addEventListener('hashchange', () => setTimeout(()=>runCheck(false), 250));
+    window.addEventListener('hashchange', () => {
+      scopeGeneration++;
+      lastFinishedAt=null;
+      cache.clear();
+      lastCombined.clear();
+      clearTimeout(retryTimer);
+      document.getElementById('wallcheck-status').textContent='页面已切换，等待本页检测';
+      setTimeout(()=>runCheck(false), 250);
+    });
     setTimeout(()=>runCheck(true), 600);
 
   }

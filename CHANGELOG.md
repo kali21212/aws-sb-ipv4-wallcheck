@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.9.10 - async page isolation and concurrent result persistence (2026-10-29)
+
+- Discard delayed probe results/errors after account, route or target changes;
+  never repaint the new page with the old scan timestamp or reachability.
+- Move last-valid result writes and clears to one background queue with
+  scoped deltas, newer-result protection and persisted clear generations.
+- Preserve existing histories, result cache and saved 1–60-minute intervals.
+- Add five asynchronous integration regression cases and cache concurrency,
+  clear, restart, validation and storage-failure regression coverage.
+- Correct current setup documentation that still described the 1.6 behavior.
+
 ## 1.9.9 - user-adjustable AWS.SB probe interval, default 5 minutes (2026-10-29)
 
 - Replace fixed 3-minute alarm with one persisted browser-profile
