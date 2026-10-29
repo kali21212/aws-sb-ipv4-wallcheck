@@ -12,7 +12,15 @@ It combines a Chromium extension with a localhost probe to:
 - retain unacknowledged IPv4 change history until manually acknowledged (no flashing) and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
 
-## Async page isolation and concurrent result storage (v1.9.10)
+## Current version and release numbering
+
+The current browser extension is **2.0.1**. Keep version identifiers as
+strings and compare their dot-separated integer components. For future
+WallCheck releases, use single-digit patch values: 2.0.1 through 2.0.9,
+then 2.1.1. This is a project release-label convention; this renumbering
+does not change stored data or the local probe protocol. See CONTRIBUTING.md.
+
+## Async page isolation and concurrent result storage (v2.0.1)
 
 - Each scan captures its account scope, route, generation, IPv4/instance
   identity and account-card state. After asynchronous work it checks that
@@ -24,7 +32,7 @@ It combines a Chromium extension with a localhost probe to:
   submit scoped deltas; one completed scan can no longer erase another
   account's results. Existing stored results remain readable.
 - Clearing a scope invalidates its in-flight cache writes using a persisted
-  generation. Other scopes, pending alerts and the saved interval stay intact.
+  generation. Other scopes' results and alerts, and the saved interval stay intact.
 - Default 5-minute and saved 1–60-minute intervals, strict Ping OR TCP22
   severe alerts, the local agent and Guardian are unchanged.
 - Regression tests execute the real worker, monitor and scanning code with

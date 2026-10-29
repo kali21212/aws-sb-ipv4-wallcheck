@@ -6,7 +6,7 @@ const cp=require('node:child_process');
 const dir=path.resolve(__dirname,'..','browser-extension');
 const src=fs.readFileSync(path.join(dir,'content.js'),'utf8');
 const manifest=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json'),'utf8'));
-assert.equal(manifest.version,'1.9.10');
+assert.equal(manifest.version,'2.0.1');
 assert.deepEqual(manifest.permissions.slice().sort(),['alarms','notifications','storage']);
 assert(src.includes("const ONLY_PORTS = [22]"));
 assert(!src.includes('aws-sb-slot-')); // never use display ordinals as identity
@@ -76,5 +76,5 @@ assert.equal(api.classify('192.0.2.1',{results:{'192.0.2.1':{
  cp.execFileSync(process.execPath,[path.join(__dirname,'probe-isolation-regression.cjs')],{stdio:'inherit'});
  cp.execFileSync(process.execPath,[path.join(__dirname,'result-cache-regression.cjs')],{stdio:'inherit'});
  cp.execFileSync(process.execPath,[path.join(__dirname,'async-scope-regression.cjs')],{stdio:'inherit'});
- console.log('PASS extension v1.9.10: hashed sgt scope, independent #1 cards, stable IPv6, 22-only classifications and scoped core');
+ console.log('PASS extension v2.0.1: hashed sgt scope, independent #1 cards, stable IPv6, 22-only classifications and scoped core');
 })().catch(e=>{console.error(e);process.exitCode=1;});
