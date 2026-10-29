@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.2 - observable scheduling, bounded recovery and panel layout (2026-10-29)
+
+- Display last valid measurement, current attempt and actual next alarm separately.
+- Check the executing worker version/protocol before scanning; surface invalidated
+  contexts and version mismatches instead of retrying them indefinitely.
+- Bound message waits and temporary retries; stop per-IP fan-out for global
+  transport/channel failures and preserve valid partial measurements.
+- Keep successful measurement data/time when cache or alert synchronization fails,
+  and report the failed stage explicitly. Ignore label-only changes during a probe.
+- Record bounded privacy-safe alarm, delivery and probe diagnostics; show the
+  latest entries in an on-demand collapsed panel without persistent polling.
+- Align panel controls and times, isolate styles from the host page and retain
+  responsive non-overlapping alert placement. Keep production port 17654.
+- Add recovery, scheduling and privacy regressions plus an isolated two-cycle
+  natural 5-minute browser test. Preserve prior scope and clear-generation guards.
+
 ## 2.0.1 - async page isolation and concurrent result persistence (2026-10-29)
 
 - Discard delayed probe results/errors after account, route or target changes;

@@ -14,7 +14,7 @@ For release-impacting changes, update `CHANGELOG.md` and the version metadata.
 
 ## Version labels
 
-The current release label is 2.0.1. Treat versions as strings in JSON, storage,
+The current release label is 2.0.2. Treat versions as strings in JSON, storage,
 exports and UI; never convert a whole version to a decimal number. Compare
 numeric components from left to right when ordering versions.
 

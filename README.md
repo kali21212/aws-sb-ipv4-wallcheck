@@ -14,11 +14,46 @@ It combines a Chromium extension with a localhost probe to:
 
 ## Current version and release numbering
 
-The current browser extension is **2.0.1**. Keep version identifiers as
+The current browser extension is **2.0.2**. Keep version identifiers as
 strings and compare their dot-separated integer components. For future
 WallCheck releases, use single-digit patch values: 2.0.1 through 2.0.9,
 then 2.1.1. This is a project release-label convention; this renumbering
 does not change stored data or the local probe protocol. See CONTRIBUTING.md.
+
+## Observable automatic checks and bounded recovery (v2.0.2)
+
+- The panel separates **上次有效实测** (the most recent valid measurement),
+  **最近尝试** (the latest attempt) and **下次自动检查** (the actual Chromium
+  alarm time). A valid measurement may report a red Ping/TCP22 failure;
+  it does not mean every target is reachable. Cached data keeps its real
+  timestamp, and delayed or unavailable scheduling is shown explicitly.
+- Every scan checks the executing worker version and protocol. An invalidated
+  extension context or an old worker produces visible reload-and-refresh
+  instructions and stops the unproductive retry loop. Extension messages
+  and network requests have bounded timeouts.
+- Temporary communication failures retry after 15, 30 and 60 seconds, then
+  wait for the next scheduled cycle or a manual retry. A batch-level timeout,
+  lost message channel or unavailable probe no longer fans out into repeated
+  requests for every IP. Valid partial results remain usable.
+- Storage or alert-sync failures are reported by their stage and retain the
+  actual completed measurements. Dynamic card label/countdown changes do
+  not invalidate a probe when its account, instance and IP are unchanged.
+- A collapsed **检测记录** section reads the latest local diagnostic entries
+  on demand: actual alarm firing, page delivery, probe start/finish and
+  failure categories. A bounded 100-entry log stores timestamps, counts,
+  duration and fixed categories, never raw page URLs, IPs, sgt or account text.
+- The compact panel groups status, times, settings and actions, with controls
+  isolated from website CSS and responsive warning-panel placement.
+- The formal probe remains 127.0.0.1:17654. Port 17655 is not a runtime
+  dependency. Existing history, manual targets, saved 1–60-minute interval,
+  default 5-minute schedule and strict Ping OR TCP22 alert policy remain.
+
+Run `node tests/extension-regression.cjs` for the integration regressions.
+`python tests/thorium-smoke.py` checks real Chromium behavior and geometry;
+`python tests/natural-schedule-browser-smoke.py --expected-version 2.0.2`
+observes two natural default 5-minute alarm cycles in an isolated profile.
+The natural-cycle test requires at least ten minutes and never manually
+fires an alarm or changes the saved interval.
 
 ## Async page isolation and concurrent result storage (v2.0.1)
 
