@@ -1,9 +1,9 @@
 AWS.SB IPv4 WallCheck Portable
-Browser extension: 1.9.7 (strict Ping OR TCP22 failure alert + side-by-side popups, 2026-10-24)
+Browser extension: 1.9.8 (3-minute automatic probes and clear last-check time, 2026-10-29)
 Local probe binary: 1.6.1 (unchanged, compatible)
 Target: aws.sb/#/ec2-instances?sgt=... (sgt hash only stored)
 TCP ports from extension: 22 only; ICMP retained
-Automatic probe: 10 minutes; local health watchdog: 1 minute
+Automatic probe: 3 minutes; local health watchdog: 1 minute
 IP changes: unlimited observed pending detail per sgt and stable instance ID; one-click group purge
 Desktop notifications require extension reload after this local update
 Manual targets: Ping/TCP22/either, 1/5/10-minute alarms while browser runs

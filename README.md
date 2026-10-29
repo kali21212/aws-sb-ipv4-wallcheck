@@ -12,6 +12,40 @@ It combines a Chromium extension with a localhost probe to:
 - retain unacknowledged IPv4 change history until manually acknowledged (no flashing) and immediately probe the new IPv4;
 - keep the local probe bound to `127.0.0.1:17654`.
 
+## 3-minute recurring ICMP/TCP22 checks and accurate last-check time (v1.9.8)
+
+- AWS.SB Chromium alarm cadence changed 10 -> 3 minutes. On upgrade,
+  an existing 10-minute wallcheck-auto-recheck browser alarm is
+  replaced with one 3-minute repeating alarm, and an already correct
+  3-minute alarm is kept intact. Every alarm forces a NEW local
+  ICMP and TCP22 probe, never a reused cache result.
+- Content-side DOM-refresh cache is shortened 5 -> 2 minutes to
+  remain below the auto recheck interval without triggering excessive
+  probes for every small page repaint or countdown mutation.
+- The main panel prints "上次实测 HH:mm:ss" when a real probe finishes.
+  A cached repaint is labeled "缓存结果（未重测）" and retains the real
+  timestamp, not the current wall clock. Partial outcomes show their
+  current actual check time. Transport failures show their FAILED
+  attempt time separately.
+- Both ICMP Ping and TCP 22 still run on each target. Existing strict
+  RED policy remains: either failed leg triggers severe warning;
+  repeated identical conditions are deduplicated. IP/account changes
+  continue to request immediate checks.
+- With 6 visible IPv4s, expected nominal traffic is about
+  6 targets * 2 probes * 20 cycles/hour = 240 checks/hour.
+  More frequent checks can expose transient ICMP-only failures,
+  but are normally light for a desktop network and EC2 host.
+- Manual IPv4 checks keep independent per-target 1/5/10-minute alarms.
+  The local Windows Guardian watchdog is unchanged.
+  Browser/Windows sleeping may delay alarms. No 24/7 cloud monitor.
+- No new permissions, AWS writes, saved account credentials,
+  extra TCP ports, Guardian modifications or deletion of history.
+
+Unit: node tests/three-minute-recheck-regression.cjs verifies
+old alarm 10 -> 3 migration, stable new alarm, cache interval,
+forced network probe and clear measured-at labeling.
+Existing unit suite and isolated Thorium browser tests remain.
+
 ## Strict OR critical alerts and non-overlapping popup layout (v1.9.7)
 
 **User-requested severe alert policy:** one failed leg is sufficient.

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.9.8 - 3-minute auto recheck and explicit measured-at time (2026-10-29)
+
+- Change recurring AWS.SB browser alarm from 10 to 3 minutes and
+  migrate existing 10-minute alarm when the extension reloads.
+- Shorten DOM repaint cache from 5 to 2 minutes; every alarm
+  uses a forced fresh ICMP/TCP22 probe.
+- Display "上次实测 HH:mm:ss" when results finish, and distinguish
+  cached results from freshly tested outcomes and failed attempts.
+- Preserve severe Ping OR TCP22 alerts, per-sgt IP transitions,
+  account alerts, manual targets, history, and Guardian.
+- Add unit and isolated Chromium regression for new interval/time.
+
 ## 1.9.7 - critical OR alerts and separate bottom-right panels (2026-10-24)
 
 - Severe red event + immediate Chromium notification attempt whenever
