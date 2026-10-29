@@ -19,44 +19,44 @@ const account=(records,sc=scope)=>core.dispatch({scope:sc,type:'monitor:account'
 const pending=(result,kind)=>result.snapshot.alerts.filter(e=>e.kind===kind&&!e.acknowledged);
 (async()=>{
  // Set baseline for a healthy account; this is NOT a cross-machine IP event.
- let r=await account([obs(2,'#2 示例账号二','203.0.113.104')]);
+ let r=await account([obs(2,'#2 示例账号二','203.0.113.102')]);
  assert.equal(r.newAlerts.length,0);
- assert.equal(r.snapshot.accountStates['2'].lastIp,'203.0.113.104');
+ assert.equal(r.snapshot.accountStates['2'].lastIp,'203.0.113.102');
  now+=1000;
- r=await account([obs(2,'#2 示例账号二','203.0.113.104',true,true)]);
+ r=await account([obs(2,'#2 示例账号二','203.0.113.102',true,true)]);
  assert.equal(r.newAlerts.map(e=>e.kind).join(','),'ACCOUNT_INVALID');
  assert.equal(r.newAlerts[0].slot,'2');
- assert.equal(r.newAlerts[0].ip,'203.0.113.104');
+ assert.equal(r.newAlerts[0].ip,'203.0.113.102');
  const failedAt=r.newAlerts[0].createdAt;
  now+=1000;
  r=await account([obs(2,'#2 示例账号二',null,true,true)]);
  assert.equal(r.newAlerts.length,0,'repetitive spinner must never spam toast');
  assert.equal(r.snapshot.accountStates['2'].phase,'REPLACING');
  now+=1000;
- r=await account([obs(2,'#2 示例账号二','203.0.113.110',false,true,false)]);
+ r=await account([obs(2,'#2 示例账号二','203.0.113.108',false,true,false)]);
  assert.equal(r.newAlerts.length,0,'banner disappeared not sufficient');
  assert.equal(r.snapshot.accountStates['2'].phase,'VERIFYING');
- assert.equal(r.snapshot.accountStates['2'].lastIp,'203.0.113.104');
+ assert.equal(r.snapshot.accountStates['2'].lastIp,'203.0.113.102');
  now+=1000;
- r=await account([obs(2,'#2 示例账号二','203.0.113.110',false,true,true)]);
+ r=await account([obs(2,'#2 示例账号二','203.0.113.108',false,true,true)]);
  assert.equal(r.newAlerts.length,1);
  assert.equal(r.newAlerts[0].kind,'ACCOUNT_RECOVERED');
- assert.equal(r.newAlerts[0].oldIp,'203.0.113.104');
- assert.equal(r.newAlerts[0].newIp,'203.0.113.110');
+ assert.equal(r.newAlerts[0].oldIp,'203.0.113.102');
+ assert.equal(r.newAlerts[0].newIp,'203.0.113.108');
  assert.equal(r.newAlerts[0].failedAt,failedAt);
  assert.equal(pending(r,'ACCOUNT_INVALID').length,1,
    'failure history remains for explicit user ack');
  assert.equal(pending(r,'ACCOUNT_RECOVERED').length,1);
  assert.equal(r.snapshot.accountStates['2'].phase,'NORMAL');
  now+=1000;
- r=await account([obs(2,'#2 示例账号二','203.0.113.110',false,false,true)]);
+ r=await account([obs(2,'#2 示例账号二','203.0.113.108',false,false,true)]);
  assert.equal(r.newAlerts.length,0,'periodic checks do not spam recovered alert');
  const oldIds=r.snapshot.alerts.filter(e=>e.kind.startsWith('ACCOUNT_')).map(e=>e.id);
  r=await core.dispatch({scope,type:'monitor:ack',ids:oldIds});
  assert.equal(r.snapshot.alerts.filter(e=>e.kind.startsWith('ACCOUNT_')&&!e.acknowledged).length,0);
- assert.equal(r.snapshot.accountStates['2'].lastIp,'203.0.113.110');
+ assert.equal(r.snapshot.accountStates['2'].lastIp,'203.0.113.108');
  now+=1000;
- r=await account([obs(2,'#2 示例账号二','203.0.113.110',true)]);
+ r=await account([obs(2,'#2 示例账号二','203.0.113.108',true)]);
  assert.equal(r.newAlerts.length,1,'second incident after recovery must notify again');
  assert.equal(r.newAlerts[0].kind,'ACCOUNT_INVALID');
  // Distinct signed-page token never shares account alerts or current phase.

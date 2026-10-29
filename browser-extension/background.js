@@ -1,9 +1,188 @@
-importScripts('monitor-core.js','probe-isolation.js','manual-core.js');
+importScripts('monitor-core.js','probe-isolation.js','manual-core.js','result-cache.js');
 
 const AUTO_ALARM = 'wallcheck-auto-recheck';
+// Identity of THIS executing worker, independent of a manifest changed on disk.
+const WORKER_CODE_VERSION = '2.0.2';
+const WORKER_PROTOCOL = 2;
 const AUTO_INTERVAL_KEY = 'wallcheck_auto_interval_minutes_v1';
 const DEFAULT_AUTO_MINUTES = 5;
 const ENDPOINT = 'http://127.0.0.1:17654/api/probe';
+const RUNTIME_DIAGNOSTICS_KEY = 'wallcheck_runtime_diagnostics_v1';
+const DIAGNOSTIC_LIMIT = 100;
+const DIAGNOSTIC_INIT_TIMEOUT_MS = 1500;
+const DIAGNOSTIC_TRIGGERS = new Set(['automatic','manual','retry','page','startup','unknown']);
+const CONTENT_DIAGNOSTIC_PHASES = new Set([
+  'scan_start','scan_complete','scan_error','cache_write','monitor_sync','context_mismatch'
+]);
+const DIAGNOSTIC_PHASES = new Set([...CONTENT_DIAGNOSTIC_PHASES,
+  'alarm_fired','delivery_complete','probe_start','probe_complete','probe_error','schedule_changed'
+]);
+const DIAGNOSTIC_ERRORS = Object.freeze({
+  NONE:'操作完成',
+  NO_RECEIVER:'标签页没有检测脚本接收器',
+  CONTEXT_INVALIDATED:'扩展上下文已失效，需要刷新页面',
+  PROTOCOL_MISMATCH:'页面与后台协议版本不一致',
+  CHANNEL_CLOSED:'扩展消息通道已关闭',
+  TIMEOUT:'检测请求超时',
+  TRANSPORT:'无法连接本机探针',
+  HTTP_ERROR:'本机探针返回失败状态',
+  INVALID_RESPONSE:'检测响应格式无效',
+  STORAGE_ERROR:'扩展本地存储操作失败',
+  ALARM_ERROR:'自动检测计划读取失败',
+  TAB_QUERY_ERROR:'无法读取标签页列表',
+  UNKNOWN:'操作失败，原因未分类'
+});
+const diagnosticTrigger=value=>DIAGNOSTIC_TRIGGERS.has(value)?value:'unknown';
+const diagnosticCategory=value=>Object.prototype.hasOwnProperty.call(DIAGNOSTIC_ERRORS,value)?value:'UNKNOWN';
+const diagnosticCount=value=>Number.isFinite(value)?Math.max(0,Math.min(10000,Math.floor(value))):0;
+const diagnosticTime=value=>Number.isFinite(value)&&value>=0?Math.floor(value):null;
+function classifyRuntimeError(error){
+  const text=String(error?.message||error||'');
+  if(/extension context invalidated/i.test(text))return 'CONTEXT_INVALIDATED';
+  if(/receiving end does not exist|could not establish connection|no receiver/i.test(text))return 'NO_RECEIVER';
+  if(/message port closed|message channel closed|channel is closed/i.test(text))return 'CHANNEL_CLOSED';
+  if(/AbortError|aborted|timed?\s*out|timeout/i.test(text))return 'TIMEOUT';
+  if(/Failed to fetch|ERR_CONNECTION|NetworkError|network request failed|connection refused/i.test(text))return 'TRANSPORT';
+  if(/^HTTP\s+\d{3}\b/.test(text))return 'HTTP_ERROR';
+  if(error?.name==='SyntaxError'||/JSON|invalid response/i.test(text))return 'INVALID_RESPONSE';
+  if(/QUOTA|MAX_WRITE|storage/i.test(text))return 'STORAGE_ERROR';
+  return 'UNKNOWN';
+}
+function cleanDiagnostic(input,at=Date.now()){
+  if(!DIAGNOSTIC_PHASES.has(input?.phase))return null;
+  const ok=input.ok!==false;
+  let errorCategory=diagnosticCategory(input.errorCategory??(ok?'NONE':'UNKNOWN'));
+  if(!ok&&errorCategory==='NONE')errorCategory='UNKNOWN';
+  return {at:diagnosticTime(at)??Date.now(),trigger:diagnosticTrigger(input.trigger),
+    phase:input.phase,ok,targetCount:diagnosticCount(input.targetCount),
+    durationMs:Number.isFinite(input.durationMs)?Math.max(0,Math.min(3600000,Math.round(input.durationMs))):0,
+    errorCategory,description:DIAGNOSTIC_ERRORS[errorCategory]};
+}
+function cleanDelivery(input){
+  if(!input||diagnosticTime(input.at)===null)return null;
+  return {at:diagnosticTime(input.at),trigger:diagnosticTrigger(input.trigger),
+    attempted:diagnosticCount(input.attempted),delivered:diagnosticCount(input.delivered),
+    failed:diagnosticCount(input.failed),errorCategory:diagnosticCategory(input.errorCategory)};
+}
+function cleanProbe(input){
+  if(!input||diagnosticTime(input.startedAt)===null)return null;
+  return {startedAt:diagnosticTime(input.startedAt),finishedAt:diagnosticTime(input.finishedAt),
+    trigger:diagnosticTrigger(input.trigger),ok:typeof input.ok==='boolean'?input.ok:null,
+    targetCount:diagnosticCount(input.targetCount),errorCategory:diagnosticCategory(input.errorCategory)};
+}
+let runtimeDiagnostics={events:[],lastAlarmAt:null,lastDelivery:null,lastProbe:null};
+let diagnosticsStorageError=false;
+let diagnosticsInitializationError=false;
+const diagnosticsReady=new Promise(resolve=>{
+  let settled=false;
+  const finish=failed=>{
+    if(settled)return;
+    settled=true;
+    clearTimeout(timer);
+    diagnosticsInitializationError=!!failed;
+    resolve();
+  };
+  // Optional history must not hold the executing-code handshake indefinitely.
+  // This is a one-shot deadline, cleared as soon as the initial read completes.
+  const timer=setTimeout(()=>finish(true),DIAGNOSTIC_INIT_TIMEOUT_MS);
+  try{
+    chrome.storage.local.get([RUNTIME_DIAGNOSTICS_KEY],data=>{
+      const failed=!!chrome.runtime.lastError;
+      // A read that arrives after the deadline must never replace newer events.
+      if(settled)return;
+      if(failed){finish(true);return;}
+      try{
+        const prior=data?.[RUNTIME_DIAGNOSTICS_KEY];
+        if(prior&&prior.version===1){
+          runtimeDiagnostics={
+            events:(Array.isArray(prior.events)?prior.events:[]).slice(-DIAGNOSTIC_LIMIT)
+              .map(item=>diagnosticTime(item?.at)===null?null:cleanDiagnostic(item,item.at)).filter(Boolean),
+            lastAlarmAt:diagnosticTime(prior.lastAlarmAt),
+            lastDelivery:cleanDelivery(prior.lastDelivery),lastProbe:cleanProbe(prior.lastProbe)
+          };
+        }
+        finish(false);
+      }catch(_){finish(true);}
+    });
+  }catch(_){finish(true);}
+});
+let diagnosticMutationQueue=Promise.resolve();
+let diagnosticWriteQueue=Promise.resolve();
+function recordRuntimeDiagnostic(input,updates={}){
+  const entry=cleanDiagnostic(input);
+  if(!entry)return Promise.resolve();
+  // This queue updates only sanitized memory. Storage writes are independent,
+  // so diagnostics cannot delay a probe reply or keep its caller waiting.
+  const task=diagnosticMutationQueue.catch(()=>{}).then(async()=>{
+    await diagnosticsReady;
+    runtimeDiagnostics.events=[...runtimeDiagnostics.events,entry].slice(-DIAGNOSTIC_LIMIT);
+    if(updates.lastAlarmAt!==undefined)runtimeDiagnostics.lastAlarmAt=diagnosticTime(updates.lastAlarmAt);
+    if(updates.lastDelivery!==undefined)runtimeDiagnostics.lastDelivery=cleanDelivery(updates.lastDelivery);
+    if(updates.lastProbe!==undefined)runtimeDiagnostics.lastProbe=cleanProbe(updates.lastProbe);
+    const snapshot=JSON.parse(JSON.stringify({version:1,...runtimeDiagnostics}));
+    diagnosticWriteQueue=diagnosticWriteQueue.catch(()=>{}).then(()=>new Promise(resolve=>{
+      chrome.storage.local.set({[RUNTIME_DIAGNOSTICS_KEY]:snapshot},()=>{
+        diagnosticsStorageError=!!chrome.runtime.lastError;resolve();
+      });
+    })).catch(()=>{diagnosticsStorageError=true;});
+  });
+  diagnosticMutationQueue=task.catch(()=>{});
+  return diagnosticMutationQueue;
+}
+function readCurrentAutoAlarm(){
+  return new Promise((resolve,reject)=>chrome.alarms.get(AUTO_ALARM,alarm=>{
+    if(chrome.runtime.lastError)return reject(Error('ALARM_ERROR'));
+    resolve(alarm?{scheduledTime:diagnosticTime(alarm.scheduledTime),
+      periodInMinutes:Number.isFinite(alarm.periodInMinutes)?alarm.periodInMinutes:null}:null);
+  }));
+}
+async function runtimeStatus(){
+  await diagnosticsReady;
+  await diagnosticMutationQueue;
+  const [settings,schedule]=await Promise.allSettled([savedAutoMinutes(),readCurrentAutoAlarm()]);
+  const statusErrors=[];
+  if(settings.status!=='fulfilled'||diagnosticsStorageError||diagnosticsInitializationError)statusErrors.push('STORAGE_ERROR');
+  if(schedule.status!=='fulfilled')statusErrors.push('ALARM_ERROR');
+  return {workerVersion:WORKER_CODE_VERSION,protocol:WORKER_PROTOCOL,probeEndpoint:ENDPOINT,
+    savedMinutes:settings.status==='fulfilled'?settings.value:null,
+    alarm:schedule.status==='fulfilled'?schedule.value:null,
+    lastAlarmAt:runtimeDiagnostics.lastAlarmAt,lastDelivery:cleanDelivery(runtimeDiagnostics.lastDelivery),
+    lastProbe:cleanProbe(runtimeDiagnostics.lastProbe),
+    diagnostics:runtimeDiagnostics.events.map(item=>({...item})),statusErrors};
+}
+function deliverAutomaticRecheck(trigger){
+  const at=Date.now();
+  if(trigger==='automatic')recordRuntimeDiagnostic({phase:'alarm_fired',trigger,ok:true}, {lastAlarmAt:at});
+  chrome.tabs.query({},tabs=>{
+    if(chrome.runtime.lastError){
+      recordRuntimeDiagnostic({phase:'delivery_complete',trigger,ok:false,errorCategory:'TAB_QUERY_ERROR'},
+        {lastDelivery:{at,trigger,attempted:0,delivered:0,failed:0,errorCategory:'TAB_QUERY_ERROR'}});
+      return;
+    }
+    const targets=(Array.isArray(tabs)?tabs:[]).filter(tab=>Number.isInteger(tab.id)&&tab.id>0);
+    Promise.all(targets.map(tab=>new Promise(resolve=>{
+      const received=reply=>resolve(chrome.runtime.lastError?classifyRuntimeError(chrome.runtime.lastError):
+        reply?.ok===false?diagnosticCategory(reply.errorCategory):'NONE');
+      try{
+        if(trigger==='automatic')chrome.tabs.sendMessage(tab.id, {type:'auto-recheck'},received);
+        else chrome.tabs.sendMessage(tab.id,{type:'startup-recheck'},received);
+      }catch(error){resolve(classifyRuntimeError(error));}
+    }))).then(outcomes=>{
+      const failed=outcomes.filter(category=>category!=='NONE');
+      const errorCategory=failed.find(category=>category!=='NO_RECEIVER')||failed[0]||'NONE';
+      const delivered=targets.length-failed.length;
+      // The query intentionally includes non-AWS tabs without requesting a
+      // new tabs permission. Unmatched pages are normal when a real receiver
+      // succeeded; retain raw counts but do not label that delivery a failure.
+      const deliveryOK=delivered>0&&failed.every(category=>category==='NO_RECEIVER');
+      recordRuntimeDiagnostic({phase:'delivery_complete',trigger,ok:deliveryOK,
+        targetCount:delivered,durationMs:Date.now()-at,
+        errorCategory:deliveryOK?'NONE':errorCategory==='NONE'?'NO_RECEIVER':errorCategory},
+        {lastDelivery:{at,trigger,attempted:targets.length,delivered,
+          failed:failed.length,errorCategory}});
+    });
+  });
+}
 
 function validatedAutoMinutes(raw){
   const value=Number(raw);
@@ -75,25 +254,30 @@ function changeAutoInterval(raw){
 chrome.runtime.onInstalled.addListener(ensureAutoAlarm);
 chrome.runtime.onStartup.addListener(() => {
   ensureAutoAlarm();
-  chrome.tabs.query({url:'https://aws.sb/*'}, tabs => {
-    for (const tab of tabs) if (tab.id) chrome.tabs.sendMessage(tab.id, {type:'startup-recheck'}, () => { void chrome.runtime.lastError; });
-  });
+  deliverAutomaticRecheck('startup');
 });
 ensureAutoAlarm();
 
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name !== AUTO_ALARM) return;
-  chrome.tabs.query({}, tabs => {
-    for (const tab of tabs) {
-      if (!tab.id) continue;
-      chrome.tabs.sendMessage(tab.id, {type:'auto-recheck'}, () => {
-        void chrome.runtime.lastError;
-      });
-    }
-  });
+  deliverAutomaticRecheck('automatic');
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if(msg?.type==='runtime:status'||msg?.type==='auto:get-status'){
+    runtimeStatus().then(data=>sendResponse({ok:true,data}))
+      .catch(()=>sendResponse({ok:false,error:'无法读取后台诊断状态',errorCategory:'UNKNOWN'}));
+    return true;
+  }
+  if(msg?.type==='diagnostics:record'){
+    if(!CONTENT_DIAGNOSTIC_PHASES.has(msg.phase)){
+      sendResponse({ok:false,error:'不支持的诊断事件'});return false;
+    }
+    recordRuntimeDiagnostic({phase:msg.phase,trigger:msg.trigger,ok:msg.ok,
+      targetCount:msg.targetCount,durationMs:msg.durationMs,errorCategory:msg.errorCategory});
+    sendResponse({ok:true,data:null});
+    return false;
+  }
   if(msg?.type==='auto:get-interval'){
     savedAutoMinutes().then(minutes=>sendResponse({ok:true,minutes}))
       .catch(e=>sendResponse({ok:false,error:String(e.message||e)}));
@@ -101,7 +285,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if(msg?.type==='auto:set-interval'){
     changeAutoInterval(msg.minutes)
-      .then(minutes=>sendResponse({ok:true,minutes}))
+      .then(minutes=>{
+        recordRuntimeDiagnostic({phase:'schedule_changed',trigger:'manual',ok:true});
+        sendResponse({ok:true,minutes});
+      })
       .catch(e=>sendResponse({ok:false,error:String(e.message||e)}));
     return true;
   }
@@ -126,6 +313,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (!msg || msg.type !== 'probe') return;
 
+  const startedAt=Date.now();
+  const trigger=diagnosticTrigger(msg.trigger);
+  const targetCount=Array.isArray(msg.payload?.ips)?diagnosticCount(msg.payload.ips.length):0;
+  recordRuntimeDiagnostic({phase:'probe_start',trigger,ok:true,targetCount},
+    {lastProbe:{startedAt,finishedAt:null,trigger,ok:null,targetCount,errorCategory:'NONE'}});
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.min(120000, Math.max(20000, (msg.payload?.ips?.length || 1) * 1000)));
   fetch(ENDPOINT, {
@@ -137,8 +329,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const text = await r.text();
     if (!r.ok) throw new Error('HTTP ' + r.status + ': ' + text);
     return JSON.parse(text);
-  }).then(data => sendResponse({ok:true, data}))
-    .catch(err => sendResponse({ok:false, error:String(err)}))
+  }).then(data => {
+    const finishedAt=Date.now();
+    recordRuntimeDiagnostic({phase:'probe_complete',trigger,ok:true,targetCount,durationMs:finishedAt-startedAt},
+      {lastProbe:{startedAt,finishedAt,trigger,ok:true,targetCount,errorCategory:'NONE'}});
+    sendResponse({ok:true, data});
+  }).catch(err => {
+    const finishedAt=Date.now(),errorCategory=classifyRuntimeError(err);
+    recordRuntimeDiagnostic({phase:'probe_error',trigger,ok:false,targetCount,
+      durationMs:finishedAt-startedAt,errorCategory},
+      {lastProbe:{startedAt,finishedAt,trigger,ok:false,targetCount,errorCategory}});
+    sendResponse({ok:false,error:String(err),errorCategory});
+  })
     .finally(() => clearTimeout(timer));
   return true;
 });
@@ -155,6 +357,49 @@ if(chrome.notifications?.onClicked){
   });
 }
 
+
+// Last-valid probe results also need a single writer: concurrent tabs submit
+// scoped deltas instead of overwriting one shared storage snapshot.
+// Cache clears and guarded probe-state updates share one ordering boundary.
+let resultLifecycleQueue=Promise.resolve();
+function queueResultLifecycle(operation){
+  const task=resultLifecycleQueue.catch(()=>{}).then(operation);
+  resultLifecycleQueue=task.then(()=>{},()=>{});
+  return task;
+}
+const resultCache = createWallCheckResultCache({
+  read: keys => new Promise((resolve,reject) =>
+    chrome.storage.local.get(keys, data => {
+      const error=chrome.runtime.lastError;
+      error ? reject(Error(error.message)) : resolve(data);
+    })),
+  write: values => new Promise((resolve,reject) =>
+    chrome.storage.local.set(values, () => {
+      const error=chrome.runtime.lastError;
+      error ? reject(Error(error.message)) : resolve();
+    }))
+});
+chrome.runtime.onMessage.addListener((msg,sender,sendResponse) => {
+  if(!String(msg?.type||'').startsWith('results:'))return;
+  if(sender?.tab && !String(sender.tab.url||'').startsWith('https://aws.sb/')){
+    sendResponse({ok:false,error:'Origin rejected'});
+    return false;
+  }
+  queueResultLifecycle(async()=>{
+    const data=await resultCache.dispatch(msg);
+    if(msg.type==='results:clear')chrome.tabs.query({url:'https://aws.sb/*'},tabs=>{
+      for(const tab of tabs){
+        if(!tab.id || tab.id===sender?.tab?.id)continue;
+        chrome.tabs.sendMessage(tab.id,{type:'results:cleared',scope:msg.scope,epoch:data.epoch},()=>{
+          void chrome.runtime.lastError;
+        });
+      }
+    });
+    return data;
+  }).then(data=>sendResponse({ok:true,data}))
+    .catch(error=>sendResponse({ok:false,error:String(error.message||error)}));
+  return true;
+});
 
 // Authoritative single-writer monitor state: no content tab may write scoped
 // IP baselines or acknowledgements directly to chrome.storage.local.
@@ -247,9 +492,17 @@ chrome.runtime.onMessage.addListener((msg,sender,sendResponse) => {
     sendResponse({ok:false,error:'Origin rejected'});
     return false;
   }
-  monitor.dispatch(msg).then(result=>{
+  const dispatch=()=>monitor.dispatch(msg);
+  const request=msg.resultEpoch===undefined ? dispatch() : queueResultLifecycle(async()=>{
+    const current=await resultCache.dispatch({type:'results:get',scope:msg.scope});
+    if(current.epoch!==msg.resultEpoch){
+      return {stale:true,snapshot:null,newAlerts:[],write:false};
+    }
+    return dispatch();
+  });
+  request.then(result=>{
     for(const ev of result.newAlerts || [])newMonitorNotification(ev);
-    sendResponse({ok:true,data:result.snapshot,changed:result.write});
+    sendResponse({ok:true,data:result.snapshot,changed:result.write,stale:!!result.stale});
     if(result.write) chrome.tabs.query({},tabs=>{
       for(const tab of tabs){
         if(!tab.id)continue;
