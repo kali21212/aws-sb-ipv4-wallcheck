@@ -1,7 +1,7 @@
 importScripts('monitor-core.js','probe-isolation.js','manual-core.js');
 
 const AUTO_ALARM = 'wallcheck-auto-recheck';
-const AUTO_RECHECK_MINUTES = 10;
+const AUTO_RECHECK_MINUTES = 3;
 const ENDPOINT = 'http://127.0.0.1:17654/api/probe';
 
 function ensureAutoAlarm() {

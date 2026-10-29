@@ -1,8 +1,10 @@
 (() => {
   'use strict';
 
-  const CACHE_MS = 5 * 60 * 1000;
-  const AUTO_RECHECK_MINUTES = 10;
+  // DOM-only refreshes may reuse a result briefly; the recurring alarm
+  // always forces a NEW probe. Keep cache shorter than the 3-min alarm.
+  const CACHE_MS = 2 * 60 * 1000;
+  const AUTO_RECHECK_MINUTES = 3;
   const SCOPED_MONITOR_VERSION = 3;
   const openedAt = Date.now();
   let currentScope = null;
@@ -791,7 +793,10 @@ function classify(ip,localResp) {
       const hit = cache.get(key);
       if (!force && hit && Date.now() - hit.time < CACHE_MS) {
         applyBadges(ipCells, hit.value);
-        document.getElementById('wallcheck-status').textContent = '缓存结果 · ' + new Date(hit.time).toLocaleTimeString();
+        // A cached paint is NOT a fresh network check. Explicitly label
+        // its timestamp so users do not mistake it for the current clock.
+        document.getElementById('wallcheck-status').textContent =
+          '缓存结果（未重测） · 上次实测 ' + new Date(hit.time).toLocaleTimeString();
         return;
       }
       document.getElementById('wallcheck-status').textContent = previous.size ? '已恢复上次有效结果 · 正在重新验证' : '检测中 · ' + ips.length + ' 个 IPv4';
@@ -839,9 +844,13 @@ function classify(ip,localResp) {
       // active probe-health warning. Keep it out of the status text entirely.
       renderHiddenNotice(ipCells);
       const status=document.getElementById('wallcheck-status');
+      // Always show the timestamp of THIS completed real probe, including
+      // partial results, instead of displaying a misleading stale time.
       status.textContent=failedIPs.length ?
-        '⚠ 已验证 '+succeededIPs.length+'/'+ips.length+' 个可见 IPv4｜其余未验证｜15秒后补测' :
-        '本机探针✓ · '+ips.length+' 个可见 IPv4 · '+lastFinishedAt.toLocaleTimeString();
+        '⚠ 本轮实测 '+lastFinishedAt.toLocaleTimeString()+' · 已验证 '+
+          succeededIPs.length+'/'+ips.length+' 个 IPv4｜其余未验证｜15秒后补测' :
+        '本机探针✓ · '+ips.length+' 个可见 IPv4 · 上次实测 '+
+          lastFinishedAt.toLocaleTimeString();
       if(failedIPs.length)retryTimer=setTimeout(()=>runCheck(true),15000);
       document.getElementById('wallcheck-status').title = '';
     } catch (err) {
@@ -853,7 +862,12 @@ function classify(ip,localResp) {
         try{await updateAgentHealth(false,err.message||String(err));}catch(_){}
       }
       const status = document.getElementById('wallcheck-status');
-      status.textContent = '⚠ 本次检测失败｜' + (previous.size ? '保留上次有效结果' : '本机探针不可用') + '｜15秒后重试';
+      // Report the failed ATTEMPT time separately from last good result.
+      // Never claim that old cached success was just re-verified.
+      status.textContent = '⚠ '+new Date().toLocaleTimeString()+
+        ' 本轮检测失败｜' +
+        (previous.size ? '保留上次有效结果' : '本机探针不可用') +
+        '｜15秒后重试';
       status.title = String(err.message || err);
       clearTimeout(retryTimer);
       retryTimer = setTimeout(() => runCheck(true), 15000);
@@ -938,7 +952,7 @@ function classify(ip,localResp) {
     const panel = document.createElement('div');
     panel.id = 'wallcheck-panel';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.7</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>IPv4 WallCheck 1.9.8</span><span id="wallcheck-count">当前 0 / 列表 0</span></div>
       <div id="wallcheck-status" style="color:#666;margin-top:5px">准备扫描</div>
       <div id="wallcheck-hidden-targets" style="display:none"></div>
       <div class="row"><span>TCP端口：22（固定）</span><button id="wallcheck-run">强制重测</button><button id="wallcheck-clear">清空本页记录</button></div>

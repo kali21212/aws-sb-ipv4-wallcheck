@@ -107,9 +107,21 @@ try:
     cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-scope-A-123'})
     result=poll('extension panel injection',lambda:ev("document.getElementById('wallcheck-panel')?.textContent || ''"))
     print('PANEL_PRESENT',repr(result[:150]),flush=True)
-    if '1.9.7' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
+    if '1.9.8' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
     text=poll('first 2 IP scanned',lambda:ev("document.getElementById('wallcheck-status')?.textContent?.includes('本机探针') && document.getElementById('wallcheck-count')?.textContent || ''"),seconds=18)
     print('FIRST_SCAN',repr(text),flush=True)
+    assert ev("document.getElementById('wallcheck-panel').textContent.includes('每 3 分钟复检')"),'THREE_MIN_LABEL_MISSING'
+    def scan_label_time():
+        return ev("document.getElementById('wallcheck-status')?.textContent.match(/上次实测\\s*(\\d{1,2}:\\d{2}:\\d{2})/)?.[1] || null")
+    original_time=scan_label_time()
+    assert original_time,'LAST_CHECK_TIME_NOT_EXPLICIT'
+    time.sleep(1.35)
+    ev("document.getElementById('wallcheck-run').click()")
+    def fresh_time():
+        seen=scan_label_time()
+        return seen if seen and seen!=original_time else None
+    new_time=poll('last check time updated after a fresh forced probe',fresh_time)
+    print('LAST_MEASURED_TIME_CHANGED',original_time,'->',new_time,flush=True)
     poll('new scoped monitor notice',lambda:ev(
       "document.getElementById('wallcheck-alert-center')?.textContent?.includes('新监控列表已接入')"))
     # True Chromium geometry test: ① alert left of ② status on desktop.
@@ -203,7 +215,7 @@ try:
     # reload the real Chromium tab, then hide the same historic IPv4 again.
     ev("location.reload()")
     poll('extension panel after page reload',lambda:ev(
-      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.7')"))
+      "document.getElementById('wallcheck-panel')?.textContent?.includes('1.9.8')"))
     poll('reloaded original list verified',lambda:ev(
       "document.getElementById('wallcheck-status')?.textContent?.includes('本机探针')"))
     ev("window.__wcCard2=document.getElementById('card2');window.__wcCard2.remove()")
