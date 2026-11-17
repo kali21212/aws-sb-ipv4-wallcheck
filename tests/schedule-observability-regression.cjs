@@ -111,7 +111,7 @@ async function tick(){await new Promise(resolve=>setImmediate(resolve));}
   const w=worker({stored:{[INTERVAL]:7},alarms:new Map([[AUTO,{periodInMinutes:7,scheduledTime:existingTime}]]),
     tabs:[{id:1},{id:2}],deliveryErrors:{2:'Could not establish connection. Receiving end does not exist. https://aws.sb/?sgt=PRIVATE_SGT 203.0.113.9'}});
   const initial=await w.send({type:'runtime:status'});
-  assert.equal(initial.ok,true);assert.equal(initial.data.workerVersion,'2.0.2');assert.equal(initial.data.protocol,2);
+  assert.equal(initial.ok,true);assert.equal(initial.data.workerVersion,'2.0.3');assert.equal(initial.data.protocol,2);
   assert.equal(initial.data.probeEndpoint,'http://127.0.0.1:17654/api/probe');assert.equal(initial.data.savedMinutes,7);
   assert.equal(initial.data.alarm.scheduledTime,existingTime);assert.equal(initial.data.alarm.periodInMinutes,7);
   const before=w.calls.filter(call=>call[0]==='alarm.create'||call[0]==='alarm.clear').length;
@@ -166,7 +166,7 @@ async function tick(){await new Promise(resolve=>setImmediate(resolve));}
   blocked.fault.blockDiagnosticWrites=true;
   const recorded=await blocked.send({type:'diagnostics:record',phase:'scan_start',trigger:'manual',ok:true,targetCount:1});
   assert.equal(recorded.ok,true);await tick();assert.equal(blocked.pendingWrites.length,1);
-  const probe=await blocked.send({type:'probe',trigger:'manual',payload:{ips:['192.0.2.10'],ports:[22]}});
+  const probe=await blocked.send({type:'probe',trigger:'manual',payload:{ips:['198.51.100.10'],ports:[22]}});
   assert.equal(probe.ok,true,'blocked diagnostic persistence must not block probe reply');
   const live=(await blocked.send({type:'runtime:status'})).data;
   assert.equal(live.lastProbe.ok,true);assert.equal(live.lastProbe.trigger,'manual');assert.equal(live.lastProbe.targetCount,1);
@@ -184,13 +184,13 @@ async function tick(){await new Promise(resolve=>setImmediate(resolve));}
   });
   await tick();assert.equal(statusAnswered,false);assert.equal(unread.pendingReads.length,1);
   unread.fireAlarm();
-  const duringRead=await unread.send({type:'probe',trigger:'automatic',payload:{ips:['192.0.2.20'],ports:[22]}});
+  const duringRead=await unread.send({type:'probe',trigger:'automatic',payload:{ips:['203.0.113.20'],ports:[22]}});
   assert.equal(duringRead.ok,true,'optional history initialization must not block a probe reply');
   const deadlines=[...unread.timers].filter(([,timer])=>timer.ms===1500);
   assert.equal(deadlines.length,1,'initial history read has exactly one bounded deadline');
   for(const [id,timer] of deadlines){unread.timers.delete(id);timer.fn();}
   const boundedStatus=(await waitingStatus).data;
-  assert.equal(boundedStatus.workerVersion,'2.0.2');assert.equal(boundedStatus.protocol,2);
+  assert.equal(boundedStatus.workerVersion,'2.0.3');assert.equal(boundedStatus.protocol,2);
   assert.equal(boundedStatus.savedMinutes,5);assert.equal(boundedStatus.alarm.periodInMinutes,5);
   assert.deepEqual(boundedStatus.statusErrors,['STORAGE_ERROR']);
   assert(boundedStatus.lastAlarmAt>1);assert.equal(boundedStatus.lastProbe.ok,true);
@@ -209,7 +209,7 @@ async function tick(){await new Promise(resolve=>setImmediate(resolve));}
 
   const failedRead=worker({failDiagnosticRead:true});
   const failedReadStatus=(await failedRead.send({type:'runtime:status'})).data;
-  assert.equal(failedReadStatus.workerVersion,'2.0.2');
+  assert.equal(failedReadStatus.workerVersion,'2.0.3');
   assert.deepEqual(failedReadStatus.statusErrors,['STORAGE_ERROR']);
   assert.equal(failedRead.timers.size,0,'an explicit read failure cancels the deadline immediately');
   await failedRead.send({type:'diagnostics:record',phase:'scan_start',trigger:'page',ok:true});
@@ -220,7 +220,7 @@ async function tick(){await new Promise(resolve=>setImmediate(resolve));}
 
   blocked.fault.failSettingsRead=true;blocked.fault.failAlarmRead=true;
   const degraded=(await blocked.send({type:'runtime:status'})).data;
-  assert.equal(degraded.workerVersion,'2.0.2');assert.equal(degraded.protocol,2);
+  assert.equal(degraded.workerVersion,'2.0.3');assert.equal(degraded.protocol,2);
   assert.equal(degraded.savedMinutes,null);assert.equal(degraded.alarm,null);
   assert.deepEqual(degraded.statusErrors,['STORAGE_ERROR','ALARM_ERROR']);
 

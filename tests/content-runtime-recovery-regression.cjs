@@ -74,7 +74,7 @@ async function invalidContextStops(){
   assert.equal(w.messages.length,before,'blocked page must not keep messaging a dead context');
 }
 async function workerHandshakeStopsMismatch(){
-  const old=source.replace("const WORKER_CODE_VERSION = '2.0.2';","const WORKER_CODE_VERSION = '2.0.1';");
+  const old=source.replace("const WORKER_CODE_VERSION = '2.0.3';","const WORKER_CODE_VERSION = '2.0.2';");
   assert.notEqual(old,source,'real worker identity fixture must differ');
   const w=world({backgroundSource:old}),t=w.tab('runtime-old-worker','192.0.2.112','ec2:i-0000000000000000b');
   await t.api.runCheck(true,'automatic');await settle();
@@ -206,7 +206,7 @@ async function statusReadErrorsDoNotUndoProbes(){
   ]){
     const w=world(),ip='192.0.2.121',t=w.tab('runtime-status-read-error',ip,'ec2:i-00000000000000009');
     t.fixture.faults.set('runtime:status',{response:{ok:true,data:{
-      workerVersion:'2.0.2',protocol:2,probeEndpoint:'http://127.0.0.1:17654/api/probe',
+      workerVersion:'2.0.3',protocol:2,probeEndpoint:'http://127.0.0.1:17654/api/probe',
       savedMinutes:item.savedMinutes,alarm:item.alarm,statusErrors:[item.category],diagnostics:[]
     }}});
     const measured=await complete(w,t,ip);

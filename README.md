@@ -14,11 +14,31 @@ It combines a Chromium extension with a localhost probe to:
 
 ## Current version and release numbering
 
-The current browser extension is **2.0.2**. Keep version identifiers as
+The current browser extension is **2.0.3**. Keep version identifiers as
 strings and compare their dot-separated integer components. For future
 WallCheck releases, use single-digit patch values: 2.0.1 through 2.0.9,
 then 2.1.1. This is a project release-label convention; this renumbering
 does not change stored data or the local probe protocol. See CONTRIBUTING.md.
+
+## EC2-only target collection and Change-IP modal isolation (v2.0.3)
+
+- Probe targets are accepted only when the IPv4 is inside one numbered AWS.SB
+  EC2 card and that card contains an explicit `IP <IPv4>` line.
+- Exclude modal/dialog/drawer/popover/form controls and CIDR helper text from
+  both target collection and account-card scanning.
+- CIDR examples such as `198.51.100.0/24` and `203.0.113.0/24` are never interpreted as
+  live EC2 hosts; WallCheck will not probe them or inject red reachability
+  badges into the Change-IP dialog.
+- Reuse the existing instance-card identity guard; the main EC2 cards remain
+  monitored when a Change-IP dialog is opened. No changes to probe port 22,
+  Ping OR severe-alert policy, 5-minute default interval, saved results,
+  account scopes, or manual IPv4 targets.
+- A real isolated-Thorium regression opens a synthetic Change-IP CIDR modal
+  alongside two healthy EC2 cards and asserts that only the two card IPv4s
+  are measured and no WallCheck badge appears inside the modal.
+
+Run `node tests/extension-regression.cjs` and `python tests/thorium-smoke.py`
+for the modal-CIDR isolation and full browser regressions.
 
 ## Observable automatic checks and bounded recovery (v2.0.2)
 
@@ -50,7 +70,7 @@ does not change stored data or the local probe protocol. See CONTRIBUTING.md.
 
 Run `node tests/extension-regression.cjs` for the integration regressions.
 `python tests/thorium-smoke.py` checks real Chromium behavior and geometry;
-`python tests/natural-schedule-browser-smoke.py --expected-version 2.0.2`
+`python tests/natural-schedule-browser-smoke.py --expected-version 2.0.3`
 observes two natural default 5-minute alarm cycles in an isolated profile.
 The natural-cycle test requires at least ten minutes and never manually
 fires an alarm or changes the saved interval.

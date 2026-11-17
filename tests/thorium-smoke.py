@@ -34,6 +34,15 @@ FAKE_HTML='''<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <div id="ip1">IP 127.0.0.1</div><div>IPv6 2001:db8:100::2</div></div>
 <div class="card" id="card2"><div class="head">#2 🔗 示例账号二 24小时 剩余25天</div>
 <div id="ip2">IP 127.0.0.2</div><div>IPv6 2001:db8:100::5</div></div>
+<!-- Change-IP modal is inserted after the first scan, matching the user's click flow. -->
+<template id="change-ip-template">
+ <div id="change-ip-modal" class="ant-modal" role="dialog" aria-modal="true">
+  <h3>更换IP</h3><div>7天</div><label>CIDR段</label>
+  <div class="cidr-field"><span class="cidr-example">198.51.100.0/24</span>
+  <span class="cidr-example">203.0.113.0/24</span></div>
+ </div>
+</template>
+<div id="plain-cidr-help">CIDR reference: 192.0.2.200/32</div>
 </body></html>'''
 fake=base64.b64encode(FAKE_HTML.encode('utf-8')).decode('ascii')
 
@@ -107,9 +116,33 @@ try:
     cdp('Page.navigate',{'url':'https://aws.sb/#/ec2-instances?sgt=synthetic-scope-A-123'})
     result=poll('extension panel injection',lambda:ev("document.getElementById('wallcheck-panel')?.textContent || ''"))
     print('PANEL_PRESENT',repr(result[:150]),flush=True)
-    if '2.0.2' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
+    if '2.0.3' not in result:raise AssertionError('WRONG_EXTENSION_PANEL')
     text=poll('first 2 IP scanned',lambda:ev("Number(document.getElementById('wallcheck-last-success')?.dataset?.timestamp)>0 && document.getElementById('wallcheck-count')?.textContent || ''"),seconds=18)
     print('FIRST_SCAN',repr(text),flush=True)
+    poll('CIDR examples excluded; only two real EC2 cards are targets',lambda:ev("""(()=>{
+      const count=document.getElementById('wallcheck-count')?.textContent||'';
+      const modal=document.getElementById('change-ip-modal');
+      const modalBadges=modal?.querySelectorAll('.wallcheck-badge').length||0;
+      const plainBadges=document.getElementById('plain-cidr-help')
+        ?.querySelectorAll('.wallcheck-badge').length||0;
+      return count.includes('当前 2 / 列表 2') && modalBadges===0 && plainBadges===0;
+    })()"""))
+    print('CHANGE_IP_CIDR_EXAMPLES_NOT_PROBED_PASS',flush=True)
+    before_modal_open=ev("Number(document.getElementById('wallcheck-last-success')?.dataset?.timestamp)||0")
+    ev("document.body.appendChild(document.getElementById('change-ip-template').content.cloneNode(true))")
+    time.sleep(1.2)  # allow the real MutationObserver to process the newly opened dialog
+    modal_state=ev("""(()=>{
+      const count=document.getElementById('wallcheck-count')?.textContent||'';
+      const modal=document.getElementById('change-ip-modal');
+      return !!modal && count.includes('当前 2 / 列表 2') &&
+        modal.querySelectorAll('.wallcheck-badge').length===0 &&
+        document.getElementById('plain-cidr-help')
+          ?.querySelectorAll('.wallcheck-badge').length===0;
+    })()""")
+    assert modal_state,'opening Change-IP dialog must not create fake target badges'
+    after_modal_open=ev("Number(document.getElementById('wallcheck-last-success')?.dataset?.timestamp)||0")
+    assert after_modal_open==before_modal_open,'opening the Change-IP dialog must not start a new EC2 probe'
+    print('DYNAMIC_CHANGE_IP_MODAL_DOES_NOT_TRIGGER_PROBE_OR_BADGES_PASS',flush=True)
     poll('default 5min loaded from worker',lambda:ev("""(()=>{
       const label=document.getElementById('wallcheck-interval-label')?.textContent||'';
       const status=document.getElementById('wallcheck-interval-feedback')?.textContent||'';
@@ -254,7 +287,7 @@ try:
     # reload the real Chromium tab, then hide the same historic IPv4 again.
     ev("location.reload()")
     poll('extension panel after page reload',lambda:ev(
-      "document.getElementById('wallcheck-panel')?.textContent?.includes('2.0.2')"))
+      "document.getElementById('wallcheck-panel')?.textContent?.includes('2.0.3')"))
     poll('reloaded original list verified',lambda:ev(
       "Number(document.getElementById('wallcheck-last-success')?.dataset?.timestamp)>0"))
     ev("window.__wcCard2=document.getElementById('card2');window.__wcCard2.remove()")

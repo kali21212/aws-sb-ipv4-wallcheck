@@ -6,7 +6,7 @@
   const CACHE_MS = 1 * 60 * 1000;
   const DEFAULT_AUTO_MINUTES = 5;
   const AUTO_INTERVAL_KEY = 'wallcheck_auto_interval_minutes_v1';
-  const CONTENT_CODE_VERSION = '2.0.2';
+  const CONTENT_CODE_VERSION = '2.0.3';
   const CONTENT_PROTOCOL = 2;
   const EXPECTED_PROBE_ENDPOINT = 'http://127.0.0.1:17654/api/probe';
   const MESSAGE_TIMEOUT_MS = 15000;
@@ -376,31 +376,59 @@
     renderTiming();
   }
 
-    function collectIPCells() {
-    const candidates = [...document.querySelectorAll('td,.ant-table-cell,[role="cell"],div,span')];
-    const best = new Map();
+  // Only actual EC2 instance cards are probe targets. AWS.SB's Change-IP
+  // modal contains documentation CIDRs (e.g. 198.51.100.0/24, 203.0.113.0/24); a page-wide
+  // IPv4 regex previously treated those examples as live hosts and injected
+  // red reachability badges into the CIDR field.
+  const NON_INSTANCE_SCAN_CONTEXT = [
+    '#wallcheck-panel','#wallcheck-alert-center',
+    '.wallcheck-badge','.wallcheck-change-badge',
+    '[role="dialog"]','[aria-modal="true"]','dialog',
+    '.ant-modal','.ant-modal-wrap','.ant-drawer',
+    '.el-dialog','.el-overlay','.modal-dialog',
+    '.MuiDialog-root','.MuiModal-root','.MuiPopover-root',
+    '.ant-popover','.ant-dropdown','.ant-select-dropdown',
+    '.el-select-dropdown'
+  ].join(',');
+  const NON_INSTANCE_SCAN_CONTROLS =
+    'input,textarea,select,option,button,[contenteditable="true"]';
 
-    for (const el of candidates) {
-      if (el.closest('#wallcheck-panel,#wallcheck-alert-center,.wallcheck-badge,.wallcheck-change-badge')) continue;
-      // Badges themselves include historical IPv4 values; never re-add those as targets.
-      let txt = (el.innerText || el.textContent || '').trim();
-      if (el.querySelector?.('.wallcheck-badge,.wallcheck-change-badge')) {
-        const clean = el.cloneNode(true);
+  function isNonInstanceScanContext(el){
+    return !!el?.closest?.(NON_INSTANCE_SCAN_CONTEXT);
+  }
+
+  function isNonInstanceScanNode(el){
+    if(!el)return false;
+    return isNonInstanceScanContext(el) ||
+      !!el.closest?.(NON_INSTANCE_SCAN_CONTROLS) ||
+      !!el.matches?.(NON_INSTANCE_SCAN_CONTROLS);
+  }
+
+  function collectIPCells() {
+    const candidates=[...document.querySelectorAll('td,.ant-table-cell,[role="cell"],div,span')];
+    const best=new Map();
+    for(const el of candidates){
+      if(isNonInstanceScanNode(el))continue;
+      let txt=(el.innerText||el.textContent||'').trim();
+      if(el.querySelector?.('.wallcheck-badge,.wallcheck-change-badge')){
+        const clean=el.cloneNode(true);
         clean.querySelectorAll('.wallcheck-badge,.wallcheck-change-badge').forEach(x=>x.remove());
-        txt = (clean.innerText || clean.textContent || '').trim();
+        txt=(clean.innerText||clean.textContent||'').trim();
       }
-      if (!txt || txt.length > 240) continue;
-
-      const ips = extractIPv4(txt);
-      for (const ip of ips) {
-        const score = txt.length * 1000 + el.children.length;
-        const prev = best.get(ip);
-        if (!prev || score < prev.score) best.set(ip, {el, score});
+      if(!txt || txt.length>240)continue;
+      for(const ip of extractIPv4(txt)){
+        // This also rejects CIDR examples outside dialogs: a valid probe
+        // target must be inside one #n card with an explicit "IP <IPv4>" line.
+        // findInstanceCardRoot is a declaration and is safely hoisted here.
+        const card=findInstanceCardRoot(el,ip);
+        if(!card || isNonInstanceScanNode(card))continue;
+        const score=txt.length*1000+el.children.length;
+        const previous=best.get(ip);
+        if(!previous || score<previous.score)best.set(ip,{el,score});
       }
     }
-
-    const map = new Map();
-    for (const [ip, item] of best) map.set(ip, [item.el]);
+    const map=new Map();
+    for(const [ip,item] of best)map.set(ip,[item.el]);
     return map;
   }
 
@@ -453,7 +481,7 @@
     const candidates=[...document.querySelectorAll('div,span,strong,h2,h3,h4,button')];
     const results=new Map();
     for(const el of candidates){
-      if(el.closest?.('#wallcheck-panel,#wallcheck-alert-center'))continue;
+      if(isNonInstanceScanContext(el))continue;
       const heading=(el.innerText||el.textContent||'').trim();
       if(heading.length>115)continue;
       const first=heading.match(/^#\s*([1-9][0-9]{0,3})\b/);
@@ -1268,16 +1296,14 @@ function classify(ip,localResp) {
   }
 
   function isPageMutationRelevant(m) {
-    const excluded = '#wallcheck-panel,#wallcheck-alert-center,.wallcheck-badge,.wallcheck-change-badge';
     const target = m.target?.nodeType === 1 ? m.target : m.target?.parentElement;
-    if (target?.closest?.(excluded)) return false;
+    if (isNonInstanceScanContext(target)) return false;
     if (m.type === 'characterData') return true;
     return [...(m.addedNodes || []), ...(m.removedNodes || [])].some(n =>
       // React/Vue often replace a Text node instead of editing characterData.
       n.nodeType === 3 || (
         n.nodeType === 1 &&
-        !n.matches?.(excluded) &&
-        !n.closest?.(excluded)
+        !isNonInstanceScanContext(n)
       )
     );
   }

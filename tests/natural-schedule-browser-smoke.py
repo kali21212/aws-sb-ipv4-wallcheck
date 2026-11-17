@@ -193,7 +193,7 @@ def main():
     parser.add_argument("--browser", default=os.environ.get(
         "WALLCHECK_THORIUM_BIN", "thorium"))
     parser.add_argument("--extension-dir", default=str(REPO / "browser-extension"))
-    parser.add_argument("--expected-version", default="2.0.2")
+    parser.add_argument("--expected-version", default="2.0.3")
     parser.add_argument("--timeout-seconds", type=int, default=1080)
     parser.add_argument("--allow-delay-seconds", type=int, default=180)
     args = parser.parse_args()

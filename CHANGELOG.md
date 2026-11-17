@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.3 - EC2-only target collection; exclude Change-IP CIDR samples (2026-11-17)
+
+- Fix false red reachability badges appearing inside AWS.SB's Change-IP CIDR field.
+  The previous page-wide IPv4 scanner interpreted example CIDRs such as
+  198.51.100.0/24 and 203.0.113.0/24 as live hosts and probed them.
+- Accept only IPv4s anchored to one numbered EC2 card with an explicit
+  "IP <IPv4>" line; exclude dialogs, modals, drawers, popovers and form controls.
+- Apply the same exclusion to account-card scanning and DOM mutation triggers.
+- Preserve the real EC2 card targets, current IP history, account isolation,
+  reachability rules, saved cache, manual-IP monitoring and local Agent/Guardian.
+- Add unit and real Chromium regressions with a synthetic Change-IP modal and
+  two CIDR examples; prove that only actual EC2 card IPs are probed.
+
 ## 2.0.2 - observable scheduling, bounded recovery and panel layout (2026-10-29)
 
 - Display last valid measurement, current attempt and actual next alarm separately.

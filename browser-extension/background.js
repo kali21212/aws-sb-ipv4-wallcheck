@@ -2,7 +2,7 @@ importScripts('monitor-core.js','probe-isolation.js','manual-core.js','result-ca
 
 const AUTO_ALARM = 'wallcheck-auto-recheck';
 // Identity of THIS executing worker, independent of a manifest changed on disk.
-const WORKER_CODE_VERSION = '2.0.2';
+const WORKER_CODE_VERSION = '2.0.3';
 const WORKER_PROTOCOL = 2;
 const AUTO_INTERVAL_KEY = 'wallcheck_auto_interval_minutes_v1';
 const DEFAULT_AUTO_MINUTES = 5;
